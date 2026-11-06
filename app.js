@@ -1121,7 +1121,9 @@
   }
   function updatePreview() {
     const t = tipoVal(), p = readPeriod();
-    if (!ED.nameTouched) $('#ed-nombre').value = autoName(t, p);
+    const auto = autoName(t, p);
+    if (!ED.nameTouched) $('#ed-nombre').value = auto;
+    $('#ed-nombre').placeholder = auto || 'Noviembre 2026'; // vacío = se guarda con este nombre
     renderCerr();
     const el = $('#ed-preview');
     if (!p || p.desde > p.hasta) { el.textContent = 'Elegí un período válido.'; return; }
@@ -1166,7 +1168,8 @@
     const len = eachDay(p.desde, p.hasta).length; return { desde: addDays(p.hasta, 1), hasta: addDays(p.hasta, len) };
   }
   $('#ed-form').addEventListener('input', e => {
-    if (e.target.id === 'ed-nombre') ED.nameTouched = e.target.value.trim() !== '';
+    // Si la persona toca el nombre (aunque lo deje vacío), ya no se completa solo.
+    if (e.target.id === 'ed-nombre') ED.nameTouched = true;
     if (e.target.id === 'ed-monto' || e.target.id === 'ed-unid') liveFormat(e.target);
     updatePreview();
   });
