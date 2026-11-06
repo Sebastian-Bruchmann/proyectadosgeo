@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Proyectados · GEO</title>
+<meta name="description" content="Objetivos de venta de GEO: porcentaje cumplido y cuánto hay que vender por día y por semana para llegar al 100 %.">
+<meta name="theme-color" content="#030c1a">
+<link rel="icon" type="image/png" href="/geo-logo.png">
+<link rel="apple-touch-icon" href="/geo-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
+<link rel="stylesheet" href="/app.css?v=2">
+<link rel="stylesheet" href="/menu.css?v=1">
+</head>
+<body>
+<div id="geo-bg" aria-hidden="true"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fdba74"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs></svg>
+
+<div class="wrap page">
+  <header class="glass top" id="top">
+    <div class="brand">
+      <button class="burger" id="btn-menu" type="button" aria-label="Ver la lista de objetivos" aria-expanded="false" aria-controls="drawer" disabled><span></span><span></span><span></span><b class="badge" id="menu-n" hidden></b></button>
+      <img class="logo" src="/geo-logo.png" alt="Logo de GEO" width="60" height="60">
+      <div class="brand-t">
+        <p class="eyebrow">GEO<span class="eb-long"> · Objetivos de venta</span></p>
+        <h1>Proyectados</h1>
+        <p class="save-state" id="save-state" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="btn-new" type="button" disabled aria-label="Nuevo objetivo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">Nuevo objetivo</span></button>
+    </div>
+  </header>
+  <div id="notice" class="notice" hidden></div>
+  <main id="main"></main>
+</div>
+
+<div class="overlay" id="editor" hidden>
+  <form class="sheet" id="ed-form" novalidate aria-labelledby="ed-title">
+    <div class="sheet-head"><h2 id="ed-title">Nuevo objetivo</h2><button type="button" class="x" id="ed-close" aria-label="Cerrar">×</button></div>
+    <fieldset class="chips" id="ed-tipo">
+      <legend>Período del objetivo</legend>
+      <label class="opt"><input type="radio" name="ed-tipo" id="ed-t-mes" value="mes" checked><span>Mensual</span></label>
+      <label class="opt"><input type="radio" name="ed-tipo" id="ed-t-semana" value="semana"><span>Semanal</span></label>
+      <label class="opt"><input type="radio" name="ed-tipo" id="ed-t-dia" value="dia"><span>Diario</span></label>
+      <label class="opt"><input type="radio" name="ed-tipo" id="ed-t-custom" value="custom"><span>Personalizado</span></label>
+    </fieldset>
+    <div class="two" id="ed-p-mes">
+      <label class="fld"><span>Mes</span><select id="ed-mes-m"></select></label>
+      <label class="fld"><span>Año</span><input type="number" id="ed-mes-y" min="2000" max="2100" inputmode="numeric"></label>
+    </div>
+    <label class="fld" id="ed-p-semana" hidden><span>Cualquier día de la semana (lunes a domingo)</span><input type="date" id="ed-semana"></label>
+    <label class="fld" id="ed-p-dia" hidden><span>Día</span><input type="date" id="ed-dia"></label>
+    <div class="two" id="ed-p-custom" hidden>
+      <label class="fld"><span>Desde</span><input type="date" id="ed-desde"></label>
+      <label class="fld"><span>Hasta</span><input type="date" id="ed-hasta"></label>
+    </div>
+    <label class="fld"><span>Nombre</span><input id="ed-nombre" autocomplete="off" placeholder="Noviembre 2026"></label>
+    <div class="two">
+      <label class="fld"><span>Objetivo en pesos</span><input id="ed-monto" inputmode="decimal" autocomplete="off" placeholder="7.500.000"></label>
+      <label class="fld"><span>Objetivo en unidades</span><input id="ed-unid" inputmode="numeric" autocomplete="off" placeholder="45"></label>
+    </div>
+    <label class="fld"><span>¿Qué contás como unidad?</span><input id="ed-unidad" autocomplete="off" placeholder="Equipos"></label>
+    <fieldset class="chips">
+      <legend>Días que se trabaja</legend>
+      <div style="display:flex;flex-wrap:wrap;gap:8px" id="ed-dias"></div>
+    </fieldset>
+    <fieldset class="cerr">
+      <legend>Feriados o días que el local no abre</legend>
+      <div class="row"><input type="date" id="ed-cerr-in" aria-label="Fecha a excluir"><button type="button" class="btn sm" id="ed-cerr-add">Agregar</button></div>
+      <ul id="ed-cerr-list"></ul>
+    </fieldset>
+    <p class="preview" id="ed-preview"></p>
+    <p class="err" id="ed-err" hidden></p>
+    <div class="sheet-foot">
+      <div id="ed-del-zone">
+        <button type="button" class="btn sm danger" id="ed-del">Eliminar objetivo</button>
+        <span class="del-confirm" id="ed-del-confirm" hidden>¿Borrar el objetivo y sus avances? <button type="button" class="btn sm danger solid" id="ed-del-yes">Sí, borrar</button><button type="button" class="btn sm" id="ed-del-no">No</button></span>
+      </div>
+      <div class="r">
+        <button type="button" class="btn" id="ed-dup">Copiar al período siguiente</button>
+        <button type="submit" class="btn primary" id="ed-save">Guardar objetivo</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="drawer-wrap" id="drawer" hidden>
+  <div class="drawer-scrim" aria-hidden="true"></div>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title">
+    <div class="dr-head">
+      <img class="dr-logo" src="/geo-logo.png" alt="" width="40" height="40">
+      <div><h2 id="dr-title">Objetivos</h2><p class="muted" id="dr-count"></p></div>
+      <button type="button" class="x" id="dr-close" aria-label="Cerrar la lista">×</button>
+    </div>
+    <div class="dr-search" id="dr-search" hidden><input type="search" id="dr-q" placeholder="Buscar por nombre" autocomplete="off" aria-label="Buscar objetivo"></div>
+    <nav class="dr-list" id="dr-list" aria-label="Lista de objetivos"></nav>
+    <div class="dr-foot"><button type="button" class="btn primary" id="dr-new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Nuevo objetivo</button></div>
+  </aside>
+</div>
+
+<div class="overlay" id="lk" hidden>
+  <form class="sheet narrow" id="lk-form" novalidate aria-labelledby="lk-title">
+    <div class="sheet-head"><div><h2 id="lk-title">Proteger con contraseña</h2><p class="muted" id="lk-sub"></p></div><button type="button" class="x" id="lk-close" aria-label="Cerrar">×</button></div>
+    <fieldset class="chips lk-modos">
+      <legend>¿Qué protege la contraseña?</legend>
+      <label class="opt wide"><input type="radio" name="lk-modo" id="lk-m-ver" value="ver" checked><span><b>Ver y editar</b><small>Sin la contraseña solo se ve el nombre del objetivo.</small></span></label>
+      <label class="opt wide"><input type="radio" name="lk-modo" id="lk-m-editar" value="editar"><span><b>Solo editar</b><small>Todos ven el avance; cargar ventas o cambiar el objetivo pide la contraseña.</small></span></label>
+    </fieldset>
+    <div class="two">
+      <label class="fld"><span id="lk-l1">Contraseña</span><input type="password" id="lk-c1" autocomplete="new-password"></label>
+      <label class="fld"><span>Repetila</span><input type="password" id="lk-c2" autocomplete="new-password"></label>
+    </div>
+    <p class="note" id="lk-note"></p>
+    <p class="err" id="lk-err" hidden></p>
+    <div class="sheet-foot">
+      <div id="lk-del-zone">
+        <button type="button" class="btn sm danger" id="lk-quitar">Quitar contraseña</button>
+        <span class="del-confirm" id="lk-quitar-confirm" hidden>¿Quitarla? Cualquiera va a poder ver y editar. <button type="button" class="btn sm danger solid" id="lk-quitar-si">Sí, quitar</button><button type="button" class="btn sm" id="lk-quitar-no">No</button></span>
+      </div>
+      <div class="r">
+        <button type="button" class="btn" id="lk-forget">Bloquear en este dispositivo</button>
+        <button type="submit" class="btn primary" id="lk-save">Poner contraseña</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="/app.js?v=3"></script>
+</body>
+</html>
