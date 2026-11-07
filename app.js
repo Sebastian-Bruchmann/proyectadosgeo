@@ -69,7 +69,9 @@
     while (pos < out.length && seen < before) { if (/[\d,]/.test(out[pos])) seen++; pos++; }
     try { el.setSelectionRange(pos, pos); } catch (e) { }
   }
-  const uName = (unidad, n) => { const b = (unidad || 'Equipos').toLowerCase(); return (n != null && Math.round(n * 10) === 10 && b.endsWith('s')) ? b.slice(0, -1) : b; };
+  /* Singular de la unidad: equipos -> equipo, operaciones -> operación, celulares -> celular */
+  const singular = b => /ciones$/.test(b) ? b.replace(/ciones$/, 'ción') : /siones$/.test(b) ? b.replace(/siones$/, 'sión') : /[lrnd]es$/.test(b) ? b.slice(0, -2) : b.endsWith('s') ? b.slice(0, -1) : b;
+  const uName = (unidad, n) => { const b = (unidad || 'Equipos').toLowerCase(); return (n != null && Math.round(n * 10) === 10) ? singular(b) : b; };
   function fromLabel(s) {
     if (!s) return '';
     const t = todayISO();
@@ -238,7 +240,8 @@
   const avancesOf = meta => [...S.avances.values()].filter(a => a.metaId === meta.id && isISO(a.fecha) && a.fecha >= meta.desde && a.fecha <= meta.hasta).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   /* ---------- cálculos ---------- */
-  function buildModel(meta, asOf) {
+  // cierra: en el cierre del día, el día elegido cuenta como cerrado si tiene dato.
+  function buildModel(meta, asOf, cierra) {
     const dias = Array.isArray(meta.dias) && meta.dias.length ? meta.dias.map(Number) : [1, 2, 3, 4, 5, 6];
     const cerr = new Set(Array.isArray(meta.cerrados) ? meta.cerrados : []);
     const objM = Math.max(0, +meta.objMonto || 0), objU = Math.max(0, +meta.objUnidades || 0);
@@ -255,13 +258,16 @@
     const ref = last
       ? { fecha: last.fecha, m: +last.monto || 0, u: +last.unidades || 0, cerrado: !!last.cerrado }
       : { fecha: clampD(t, meta.desde, meta.hasta), m: 0, u: 0, cerrado: t > meta.hasta };
+    if (cierra && last && last.fecha === asOf) ref.cerrado = true;
     const closed = s => s < ref.fecha || (s === ref.fecha && ref.cerrado);
     const habTrans = transAt(ref.fecha, ref.cerrado);
-    const habRest = H - habTrans;
+    // En el cierre, lo que queda se cuenta desde el día siguiente a la fecha elegida (aunque el local no tenga dato de ese día)
+    const corte = cierra && isISO(asOf) && asOf >= meta.desde && asOf <= meta.hasta;
+    const habRest = corte ? Math.min(H - habTrans, H - habHasta.get(asOf)) : H - habTrans;
     const vendM = ref.m, vendU = ref.u;
     const faltaM = Math.max(0, objM - vendM), faltaU = Math.max(0, objU - vendU);
     const necM = habRest ? faltaM / habRest : null, necU = habRest ? faltaU / habRest : null;
-    const open = days.filter(s => isWork(s) && !closed(s));
+    const open = days.filter(s => isWork(s) && !closed(s) && !(corte && s <= asOf));
     let prevU = vendU;
     const plan = open.map((s, k) => {
       const cumM = vendM + necM * (k + 1);
@@ -657,20 +663,43 @@
   const isSel = key => Object.prototype.hasOwnProperty.call(CP.sel, key) ? !!CP.sel[key] : !/san martin|dean funes/.test(key);
   const mainP = M => M.objM ? M.pM : M.pU;
   const cierreFecha = () => (S.cierreFecha && isISO(S.cierreFecha)) ? S.cierreFecha : todayISO();
+  /* Lo vendido en el día elegido: dato de ese día menos el dato anterior. */
+  function hoyOf(M, fecha) {
+    const cur = M.av.find(a => a.fecha === fecha);
+    if (!cur) return null;
+    const prevs = M.av.filter(a => a.fecha < fecha), prev = prevs[prevs.length - 1] || null;
+    const isW = s => M.dias.includes(dow(s)) && !M.cerr.has(s);
+    const antes = M.habHasta.get(fecha) - (isW(fecha) ? 1 : 0);
+    const hasta = prev ? M.habHasta.get(prev.fecha) : 0;
+    let desde = null;
+    if (antes - hasta > 0) { // hay días hábiles sin dato en el medio: lo de "hoy" los incluye
+      let s = prev ? addDays(prev.fecha, 1) : M.meta.desde, g = 0;
+      while (s < fecha && !isW(s) && g++ < 60) s = addDays(s, 1);
+      desde = s;
+    }
+    return { m: (+cur.monto || 0) - (prev ? +prev.monto || 0 : 0), u: (+cur.unidades || 0) - (prev ? +prev.unidades || 0 : 0), desde };
+  }
   function cierreRows(fecha) {
     return sortedMetas().filter(m => m.desde <= fecha && fecha <= m.hasta).map(m => {
       const name = localName(m), key = nrm(name), locked = hidden(m);
-      const M = locked ? null : buildModel(m, fecha);
-      return { m, name, key, locked, M, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
+      const M = locked ? null : buildModel(m, fecha, true);
+      return { m, name, key, locked, M, hoy: M ? hoyOf(M, fecha) : null, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
     }).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   }
+  /* % proyectado al cierre del período */
+  const proyP = M => M.objM ? (M.proyM != null ? M.proyM / M.objM : null) : (M.objU && M.proyU != null ? M.proyU / M.objU : null);
+  const sortCierre = list => list.slice().sort((a, b) => (proyP(b.M) ?? mainP(b.M) ?? -1) - (proyP(a.M) ?? mainP(a.M) ?? -1));
+  const colP = p => p == null ? '' : p >= 1 ? 'ok' : p >= 0.9 ? 'warn' : 'bad';
   function cierreTotals(rows) {
-    const Ms = rows.filter(r => r.sel && r.M).map(r => r.M);
+    const R = rows.filter(r => r.sel && r.M), Ms = R.map(r => r.M);
     if (!Ms.length) return null;
     const sum = f => Ms.reduce((x, M) => x + (f(M) || 0), 0);
     const objM = sum(M => M.objM), objU = sum(M => M.objU), vendM = sum(M => M.vendM), vendU = sum(M => M.vendU);
     const w = M => objM ? M.objM : M.objU, wt = Ms.reduce((x, M) => x + w(M), 0) || 1;
     const habRest = Math.max(...Ms.map(M => M.habRest)), H = Math.max(...Ms.map(M => M.H));
+    const mismoRest = Ms.every(M => M.habRest === habRest);
+    const conHoy = R.filter(r => r.hoy);
+    const fo = Ms.map(M => M.firstOpen).filter(Boolean).sort();
     const T = {
       n: Ms.length, objM, objU, vendM, vendU, H, habRest, habTrans: H - habRest,
       pM: objM ? vendM / objM : null, pU: objU ? vendU / objU : null,
@@ -678,13 +707,30 @@
       started: Ms.some(M => M.started), ended: Ms.every(M => M.ended),
       proyM: sum(M => M.proyM != null ? M.proyM : M.vendM), proyU: sum(M => M.proyU != null ? M.proyU : M.vendU),
       faltaM: Math.max(0, objM - vendM), faltaU: Math.max(0, objU - vendU),
-      necM: sum(M => M.habRest ? M.necM : 0), necU: sum(M => M.habRest ? M.necU : 0),
+      ritmoM: sum(M => M.ritmoM), ritmoU: sum(M => M.ritmoU),
+      hoyN: conHoy.length, hoyM: conHoy.reduce((x, r) => x + r.hoy.m, 0), hoyU: conHoy.reduce((x, r) => x + r.hoy.u, 0),
+      hoyGap: conHoy.filter(r => r.hoy.desde).length, sinHoy: R.filter(r => !r.hoy),
+      firstOpen: fo[0] || null, mes: Ms.every(M => M.meta.tipo === 'mes'),
       unidad: Ms[0].unidad,
     };
+    // Por día para el 100 %: si todos tienen los mismos días por delante, lo que falta del total repartido; si no, la suma de cada local.
+    T.necM = mismoRest && habRest ? T.faltaM / habRest : sum(M => M.habRest ? M.necM : 0);
+    T.necU = mismoRest && habRest ? T.faltaU / habRest : sum(M => M.habRest ? M.necU : 0);
     if (!T.started) { T.proyM = null; T.proyU = null; }
+    T.proyP = T.proyM != null && objM ? T.proyM / objM : T.proyU != null && objU ? T.proyU / objU : null;
     return T;
   }
+  function stTot(T) {
+    const p = T.objM ? T.pM : T.pU;
+    if (p == null) return { k: '', t: '' };
+    if (p >= 1) return { k: 'ok', t: 'Cumplido' };
+    if (T.ended) return { k: 'bad', t: 'No alcanzado' };
+    if (T.proyP == null) return { k: '', t: 'Recién empieza' };
+    return T.proyP >= 1 ? { k: 'ok', t: 'En ritmo' } : T.proyP >= 0.9 ? { k: 'warn', t: 'Cerca del ritmo' } : { k: 'bad', t: 'Debajo del ritmo' };
+  }
   const stOf = M => status(mainP(M), M.esperado, M.started, M.ended);
+  const hoyLbl = fecha => fecha === todayISO() ? 'Vendido hoy' : `Vendido el ${fDow(fecha)}`;
+  const finLbl = T => T.mes ? 'a fin de mes' : 'al cierre del período';
   const ICO_CIERRE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5"/><path d="M8.5 11.5h7M8.5 15.5h4.5"/></svg>';
   const ICO_SHARE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m0 0 4 4m-4-4L8 7"/><path d="M5 12v6.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V12"/></svg>';
   const ICO_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
@@ -695,7 +741,7 @@
     const D = parse(fecha);
     const titulo = `${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`;
     const sel = rows.filter(r => r.sel && r.M);
-    const staleN = sel.filter(r => r.stale).length;
+    const staleN = sel.filter(r => !r.hoy).length;
     let h = `<section class="head rise" style="--i:0">
       <div><p class="eyebrow">Cierre del día${fecha === t ? ' · hoy' : ''}</p>
         <h2>${titulo}</h2>
@@ -716,12 +762,12 @@
       <div class="ci-actions">
         <button type="button" class="btn primary lg" id="ci-share"${T ? '' : ' disabled'}>${ICO_SHARE}Enviar imagen</button>
         <button type="button" class="btn lg" id="ci-copy"${T ? '' : ' disabled'}>${ICO_COPY}Copiar texto</button>
-        <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Actualizar ventas'}</button>
+        <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Cargar ventas del día'}</button>
       </div>
-      ${staleN && !S.cierreEdit ? `<p class="ci-warn">${staleN === 1 ? '1 local no tiene' : `${staleN} locales no tienen`} dato del ${fecha === t ? 'día de hoy' : fDow(fecha)}: se usa el último que cargaste. Tocá "Actualizar ventas" para ponerlo al día.</p>` : ''}
+      ${staleN && !S.cierreEdit ? `<p class="ci-warn">${staleN === 1 ? '1 local no tiene' : `${staleN} locales no tienen`} dato del ${fecha === t ? 'día de hoy' : fDow(fecha)}, así que no suma en "${hoyLbl(fecha)}" y se proyecta con su último dato. Tocá "Cargar ventas del día" para ponerlo al día.</p>` : ''}
     </section>`;
     if (!T) return h + `<section class="glass panel rise" style="--i:2"><p class="muted">Elegí al menos un local para armar el cierre.</p></section>`;
-    h += `<section class="summary"><div class="meters">${metersHTML(T, 2)}</div>${cierreGoalHTML(T, 4)}</section>`;
+    h += cierreKpisHTML(T, fecha, 2);
     h += cierreTableHTML(fecha, sel, T, 5);
     h += `<section class="glass panel ci-prev rise" style="--i:6" aria-labelledby="ci-prev-h">
       <div class="panel-head"><div><h2 id="ci-prev-h">Así sale la imagen</h2><p>Es lo que se manda con "Enviar imagen". En el celu se abre para compartir directo a WhatsApp; en la compu se descarga.</p></div></div>
@@ -730,51 +776,114 @@
     <textarea id="copy-fallback" readonly hidden aria-label="Texto del cierre para copiar"></textarea>`;
     return h;
   }
+  /* Las tres cifras del cierre: vendido en el día, proyección y lo que hace falta por día */
+  function cierreKpisHTML(T, fecha, i) {
+    const u = n => esc(uName(T.unidad, n));
+    const per = T.mes ? 'del mes' : 'del período';
+    const falta = T.n - T.hoyN;
+    const chip1 = falta ? `<span class="chip warn">${falta === 1 ? 'Falta 1 local' : `Faltan ${falta} locales`}</span>` : `<span class="chip ok">${T.n === 1 ? 'Cargado' : 'Todos cargados'}</span>`;
+    const k1 = `<article class="glass meter kpi rise" style="--i:${i}" data-tilt>
+      <header class="meter-top"><h3>${hoyLbl(fecha)}</h3>${chip1}</header>
+      ${T.objM ? `<p class="kpi-big">${num('chM', T.hoyN ? T.hoyM : null, 'money')}</p>` : ''}
+      ${T.objU ? `<p class="${T.objM ? 'kpi-mid' : 'kpi-big'}">${num('chU', T.hoyN ? T.hoyU : null, 'units')} <small>${u(T.hoyU)}</small></p>` : ''}
+      <p class="meter-sub">${T.hoyN ? (T.n === 1 ? 'Lo que se vendió en el día' : `Suma de ${T.hoyN} de ${T.n} locales`) : 'Todavía ningún local cargó este día'}${T.hoyGap ? ` · ${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar` : ''}</p>
+      <dl class="meter-foot">
+        ${T.objM ? `<div><dt>Acumulado ${per}</dt><dd>${money(T.vendM)} <small>${pct(T.pM)}</small></dd></div>` : ''}
+        ${T.objU ? `<div><dt>${esc(T.unidad)} ${per}</dt><dd>${uSmart(T.vendU)} <small>${pct(T.pU)}</small></dd></div>` : ''}
+      </dl>
+    </article>`;
+    const st = stTot(T), fill = T.proyP == null ? 0 : Math.min(1, Math.max(0, T.proyP)) * 100;
+    const k2 = `<article class="glass meter kpi rise" style="--i:${i + 1}" data-tilt>
+      <header class="meter-top"><h3>Proyección ${finLbl(T)}</h3>${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</header>
+      ${T.proyP == null ? `<p class="kpi-big">—</p><p class="meter-sub">Aparece cuando haya al menos un día cerrado.</p>` : `
+      ${T.objM ? `<p class="kpi-big">${num('cpM', T.proyM, 'money')}</p>` : ''}
+      ${T.objU ? `<p class="${T.objM ? 'kpi-mid' : 'kpi-big'}">${num('cpU', Math.round(T.proyU), 'units')} <small>${u(T.proyU)}${T.objM ? ` · ${pct(T.proyU / T.objU)}` : ''}</small></p>` : ''}
+      <p class="meter-sub"><b class="pc ${colP(T.proyP)}">${pct(T.proyP)}</b> del objetivo de ${T.objM ? money(T.objM) : `${uSmart(T.objU)} ${u(T.objU)}`}</p>
+      <div class="track" role="img" aria-label="Proyección: ${pct(T.proyP)} del objetivo"><span class="fill ${colP(T.proyP)}" data-w="${fill.toFixed(2)}" data-k="cproy" style="width:${fill.toFixed(2)}%"></span></div>
+      <dl class="meter-foot">
+        <div><dt>Ritmo actual</dt><dd>${T.objM ? money(T.ritmoM) : `${uSmart(T.ritmoU)} ${u(T.ritmoU)}`} <small>por día</small></dd></div>
+        <div><dt>Días hábiles</dt><dd>${T.habTrans} de ${T.H}</dd></div>
+      </dl>`}
+    </article>`;
+    return `<section class="ci-kpis">${k1}${k2}${cierreGoalHTML(T, i + 2)}</section>`;
+  }
   function cierreGoalHTML(T, i) {
     const u = n => esc(uName(T.unidad, n));
     const orbs = '<span class="orb o1" aria-hidden="true"></span><span class="orb o2" aria-hidden="true"></span>';
-    const open = `<aside class="goal rise" style="--i:${i}" data-tilt aria-label="Lo que falta entre los locales elegidos">${orbs}<p class="g-eyebrow">Para llegar al 100 %</p><p class="g-sub">Entre los ${T.n} ${T.n === 1 ? 'local elegido' : 'locales elegidos'}</p><hr>`;
+    const open = `<aside class="goal kpi rise" style="--i:${i}" data-tilt aria-label="Lo que hay que vender para llegar al 100 %">${orbs}<p class="g-eyebrow">Para llegar al 100 %</p><p class="g-sub">${T.n === 1 ? 'Del local elegido' : `Entre los ${T.n} locales elegidos`}</p><hr>`;
     if (done(T) || T.ended || !T.habRest) {
       return `${open}<p class="g-big">${done(T) ? '¡Objetivo cumplido!' : 'Período terminado'}</p>${T.objM ? gRow('Monto', pct(T.pM)) : ''}${T.objU ? gRow(esc(T.unidad), pct(T.pU)) : ''}</aside>`;
     }
+    let cmp = '';
+    const rN = T.objM ? T.necM : T.necU, rR = T.objM ? T.ritmoM : T.ritmoU;
+    if (rR > 0) {
+      const d = rN / rR - 1;
+      cmp = d > 0.005 ? `Hay que vender <b>${pct(d)} más</b> por día que el ritmo actual.` : `Con el ritmo actual <b>llegan</b> (sobra ${pct(-d)} por día).`;
+    }
     return `${open}
+      <p class="g-label">Por día, ${fromLabel(T.firstOpen)}</p>
+      ${T.objM ? `<p class="g-big">${num('cnecM', T.necM, 'money')}</p>` : ''}
+      ${T.objU ? `<p class="${T.objM ? 'g-mid' : 'g-big'}">${num('cnecU', T.necU, 'units')} ${u(T.necU)}</p>` : ''}
+      <hr>
       ${T.objM ? gRow('Faltan', money(T.faltaM)) : ''}
       ${T.objU ? gRow(T.objM ? '' : 'Faltan', `${uSmart(T.faltaU)} ${u(T.faltaU)}`) : ''}
       ${gRow('Días hábiles que quedan', T.habRest)}
-      <hr>
-      <p class="g-label">Por día, entre todos</p>
-      ${T.objM ? `<p class="g-big">${num('cnecM', T.necM, 'money')}</p>` : ''}
-      ${T.objU ? `<p class="${T.objM ? 'g-mid' : 'g-big'}">${num('cnecU', T.necU, 'units')} ${u(T.necU)}</p>` : ''}
-      ${T.proyM != null && T.objM ? `<hr>${gRow('Proyección al cierre', `${money(T.proyM)} · ${pct(T.proyM / T.objM)}`)}` : ''}
+      ${cmp ? `<hr><p class="g-note">${cmp}</p>` : ''}
     </aside>`;
+  }
+  /* Celda con valor principal y una segunda línea chica */
+  const c2 = (a, b) => `${a}${b ? `<span class="c2">${b}</span>` : ''}`;
+  function cierreCells(M, hoy, stale, last) {
+    const u = n => esc(uName(M.unidad, n));
+    const both = (m, n) => M.objM ? c2(money(m), M.objU ? `${uSmart(n)} ${u(n)}` : '') : `${uSmart(n)} ${u(n)}`;
+    const H = hoy ? c2(M.objM ? money(hoy.m) : `${uSmart(hoy.u)} ${u(hoy.u)}`, [M.objM && M.objU ? `${uSmart(hoy.u)} ${u(hoy.u)}` : '', hoy.desde ? `desde el ${fDM(hoy.desde)}` : ''].filter(Boolean).join(' · '))
+      : `<span class="chip warn">sin dato</span>${last ? `<span class="c2">último: ${fDM(last.fecha)}</span>` : ''}`;
+    const A = c2(M.objM ? `${money(M.vendM)} <small class="muted">${pct(M.pM)}</small>` : `${uSmart(M.vendU)} ${u(M.vendU)} <small class="muted">${pct(M.pU)}</small>`, M.objM && M.objU ? `${uSmart(M.vendU)} ${u(M.vendU)} · ${pct(M.pU)}` : '');
+    const pp = proyP(M);
+    const P = pp == null ? '—' : c2(`${M.objM ? money(M.proyM) : `${nf0.format(M.proyU)} ${u(M.proyU)}`} <small class="pc ${colP(pp)}">${pct(pp)}</small>`, M.objM && M.objU && M.proyU != null ? `${nf0.format(M.proyU)} ${u(M.proyU)} · ${pct(M.proyU / M.objU)}` : '');
+    const N = done(M) ? '<span class="chip ok">Cumplido</span>' : !M.habRest ? '—' : both(M.necM, M.necU);
+    return { H, A, P, N };
   }
   function cierreTableHTML(fecha, sel, T, i) {
     const t = todayISO(), U = esc(T.unidad);
     const anyM = sel.some(r => r.M.objM), anyU = sel.some(r => r.M.objU);
     const edit = S.cierreEdit;
-    const cerrado = S.cierreEstado != null ? S.cierreEstado === 'cerrado' : (fecha < t || new Date().getHours() >= 21);
+    const cerrado = S.cierreEstado != null ? S.cierreEstado === 'cerrado' : true;
     const diaTxt = fecha === t ? 'hoy' : `el ${fDow(fecha)}`;
-    const list = edit ? sel : sel.slice().sort((a, b) => mainP(b.M) - mainP(a.M));
+    const hoyCol = fecha === t ? 'Hoy' : cap(fDow(fecha)), proyCol = `Proyección ${T.mes ? 'fin de mes' : 'al cierre'}`;
+    const list = edit ? sel : sortCierre(sel);
     const body = list.map((r, k) => {
       const M = r.M, st = stOf(M), id = esc(r.m.id), can = canEdit(r.m);
       const there = S.avances.get(r.m.id + '__' + fecha), base = there || M.last;
-      const nec = done(M) ? 'Cumplido' : !M.habRest ? '—' : [M.objM ? money(M.necM) : '', M.objU ? `${uSmart(M.necU)} ${esc(uName(M.unidad, M.necU))}` : ''].filter(Boolean).join(' · ');
-      const dato = M.last ? (r.stale ? `<span class="chip warn">${fDM(M.last.fecha)}</span>` : `${fDM(M.last.fecha)}${M.last.cerrado ? '' : ' <small class="muted">en curso</small>'}`) : '<span class="chip warn">sin datos</span>';
-      const cM = !M.objM ? '<td>—</td>' : edit ? `<td data-l="Monto acumulado"><input class="qin" id="ci-m-${id}" inputmode="decimal" autocomplete="off" placeholder="${base ? nf0.format(base.monto) : '0'}" aria-label="Monto acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>` : `<td data-l="Vendido">${money(M.vendM)} <small class="muted">${pct(M.pM)}</small></td>`;
-      const cU = !anyU ? '' : !M.objU ? '<td>—</td>' : edit ? `<td data-l="${U} (acumulado)"><input class="qin qty" id="ci-u-${id}" inputmode="numeric" autocomplete="off" placeholder="${base ? nf0.format(base.unidades) : '0'}" aria-label="${U} acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>` : `<td data-l="${U}">${uSmart(M.vendU)} <small class="muted">${pct(M.pU)}</small></td>`;
-      return `<tr style="--r:${Math.min(k, 24)}"><th scope="row" class="l"><i class="dot ${st.k}" aria-hidden="true"></i>${esc(r.name)}${can ? '' : ` <span class="muted" title="Solo lectura sin contraseña">${ICO.lock}</span>`}</th>
-        ${anyM ? cM : ''}${cU}
-        ${edit ? `<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td>` : `<td data-l="Por día para el 100 %">${nec}</td><td class="st">${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</td><td data-l="Dato al">${dato}</td>`}</tr>`;
+      const name = `<th scope="row" class="l"><i class="dot ${st.k}" aria-hidden="true"></i>${esc(r.name)}${can ? '' : ` <span class="muted" title="Solo lectura sin contraseña">${ICO.lock}</span>`}</th>`;
+      if (edit) {
+        const cM = !anyM ? '' : !M.objM ? '<td>—</td>' : `<td data-l="Monto acumulado"><input class="qin" id="ci-m-${id}" inputmode="decimal" autocomplete="off" placeholder="${base ? nf0.format(base.monto) : '0'}" aria-label="Monto acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
+        const cU = !anyU ? '' : !M.objU ? '<td>—</td>' : `<td data-l="${U} (acumulado)"><input class="qin qty" id="ci-u-${id}" inputmode="numeric" autocomplete="off" placeholder="${base ? nf0.format(base.unidades) : '0'}" aria-label="${U} acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
+        return `<tr style="--r:${Math.min(k, 24)}">${name}${cM}${cU}<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td></tr>`;
+      }
+      const C = cierreCells(M, r.hoy, r.stale, M.last);
+      return `<tr style="--r:${Math.min(k, 24)}">${name}<td data-l="${hoyCol}">${C.H}</td><td data-l="Acumulado">${C.A}</td><td data-l="${proyCol}">${C.P}</td><td data-l="Para el 100 %, por día">${C.N}</td><td class="st">${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</td></tr>`;
     }).join('');
     const head = edit
       ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}<th scope="col">Último dato</th></tr>`
-      : `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Vendido</th>' : ''}${anyU ? `<th scope="col">${U}</th>` : ''}<th scope="col">Por día para el 100 %</th><th scope="col">Estado</th><th scope="col">Dato al</th></tr>`;
-    const foot = edit ? '' : `<tfoot><tr><th scope="row" class="l">Total</th>${anyM ? `<td data-l="Vendido">${money(T.vendM)} <small class="muted">${pct(T.pM)}</small></td>` : ''}${anyU ? `<td data-l="${U}">${uSmart(T.vendU)} <small class="muted">${pct(T.pU)}</small></td>` : ''}<td data-l="Por día para el 100 %">${T.habRest && !done(T) ? [T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${esc(uName(T.unidad, T.necU))}` : ''].filter(Boolean).join(' · ') : '—'}</td><td colspan="2" class="hide-sm"></td></tr></tfoot>`;
+      : `<tr><th class="l" scope="col">Local</th><th scope="col">${hoyCol}</th><th scope="col">Acumulado</th><th scope="col">${proyCol}</th><th scope="col">Para el 100 %, por día</th><th scope="col">Estado</th></tr>`;
+    let foot = '';
+    if (!edit) {
+      const TU = n => esc(uName(T.unidad, n));
+      const bothT = (m, n) => T.objM ? c2(money(m), T.objU ? `${uSmart(n)} ${TU(n)}` : '') : `${uSmart(n)} ${TU(n)}`;
+      const stT = stTot(T);
+      foot = `<tfoot><tr><th scope="row" class="l">Total</th>
+        <td data-l="${hoyCol}">${T.hoyN ? bothT(T.hoyM, T.hoyU) : '—'}</td>
+        <td data-l="Acumulado">${c2(T.objM ? `${money(T.vendM)} <small class="muted">${pct(T.pM)}</small>` : `${uSmart(T.vendU)} ${TU(T.vendU)} <small class="muted">${pct(T.pU)}</small>`, T.objM && T.objU ? `${uSmart(T.vendU)} ${TU(T.vendU)} · ${pct(T.pU)}` : '')}</td>
+        <td data-l="${proyCol}">${T.proyP == null ? '—' : c2(`${T.objM ? money(T.proyM) : `${nf0.format(T.proyU)} ${TU(T.proyU)}`} <small class="pc ${colP(T.proyP)}">${pct(T.proyP)}</small>`, T.objM && T.objU ? `${nf0.format(T.proyU)} ${TU(T.proyU)} · ${pct(T.proyU / T.objU)}` : '')}</td>
+        <td data-l="Para el 100 %, por día">${done(T) ? '<span class="chip ok">Cumplido</span>' : T.habRest ? bothT(T.necM, T.necU) : '—'}</td>
+        <td class="st">${stT.t ? `<span class="chip ${stT.k}">${stT.t}</span>` : ''}</td></tr></tfoot>`;
+    }
     return `<section class="glass panel ${edit ? 'entry ' : ''}rise" style="--i:${i}" aria-labelledby="ci-t-h">
-      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Actualizar ventas de los locales' : 'Por local'}</h2><p>${edit ? 'Escribí el vendido acumulado del mes de cada local. El número gris es el último dato: si dejás un campo vacío, queda como está.' : 'Ordenados por avance. El punto de color es el estado contra el ritmo ideal.'}</p></div></div>
+      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Cargar ventas del día' : 'Por local'}</h2><p>${edit ? 'Escribí el vendido acumulado del mes de cada local (no solo lo del día: la web resta el dato anterior). El número gris es el último dato: si dejás un campo vacío, queda como está.' : `Ordenados por proyección. "${hoyCol}" es el acumulado menos el dato anterior.`}</p></div></div>
       ${edit ? `<fieldset class="estado"><legend>¿${fecha === t ? 'Hoy' : cap(fDow(fecha))} ya cerró?</legend>
-        <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label>
-        <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label></fieldset>` : ''}
+        <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label>
+        <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label></fieldset>` : ''}
       <div class="tbl-wrap"><table class="ci-table${edit ? ' edit' : ''}"><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>
       ${edit ? `${S.cierreErr ? `<p class="err" role="alert">${esc(S.cierreErr)}</p>` : ''}<div class="q-actions"><button type="button" class="btn" id="ci-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ci-save">Guardar y actualizar cierre</button></div>` : ''}
     </section>`;
@@ -805,20 +914,27 @@
   function cierreText() {
     const fecha = cierreFecha(), rows = cierreRows(fecha), T = cierreTotals(rows);
     if (!T) return '';
-    const sel = rows.filter(r => r.sel && r.M).sort((a, b) => mainP(b.M) - mainP(a.M));
+    const sel = sortCierre(rows.filter(r => r.sel && r.M));
     const u = n => uName(T.unidad, n);
     const dot = st => st.k === 'ok' ? '🟢' : st.k === 'warn' ? '🟡' : st.k === 'bad' ? '🔴' : '⚪';
-    const D = parse(fecha);
+    const D = parse(fecha), dia = fecha === todayISO() ? 'hoy' : `el ${fDow(fecha)}`;
+    const both = (m, n, sep) => [T.objM ? money(m) : '', T.objU ? `${uSmart(n)} ${u(n)}` : ''].filter(Boolean).join(sep || ' · ');
     const L = [`*Cierre ${cap(DOW_L[D.getDay()])} ${fDM(fecha)}* · ${sel.map(r => r.name).join(', ')}`, ''];
-    L.push('*Total*');
-    if (T.objM) L.push(`Vendido: ${money(T.vendM)} de ${money(T.objM)} (*${pct(T.pM)}*)`);
-    if (T.objU) L.push(`${T.unidad}: ${uSmart(T.vendU)} de ${uSmart(T.objU)} (*${pct(T.pU)}*)`);
-    L.push(`Ritmo ideal: ${pct(T.esperado)}${T.proyM != null && T.objM ? ` · Proyección: ${money(T.proyM)} (${pct(T.proyM / T.objM)})` : ''}`);
-    if (!done(T) && T.habRest) L.push(`Para el 100 %: ${[T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${u(T.necU)}` : ''].filter(Boolean).join(' y ')} por día (quedan ${T.habRest} días hábiles)`);
+    L.push(`*Vendido ${dia}:* ${T.hoyN ? both(T.hoyM, T.hoyU) : 'sin datos cargados'}${T.sinHoy.length && T.hoyN ? ` _(sin ${T.sinHoy.map(r => r.name).join(', ')})_` : ''}`);
+    L.push(`*Proyección ${finLbl(T)}:* ${T.proyP == null ? 'todavía no hay días cerrados' : [T.objM ? `${money(T.proyM)} (*${pct(T.proyM / T.objM)}*)` : '', T.objU ? `${nf0.format(T.proyU)} ${u(T.proyU)} (${T.objM ? pct(T.proyU / T.objU) : `*${pct(T.proyU / T.objU)}*`})` : ''].filter(Boolean).join(' · ')}`);
+    if (done(T)) L.push('*Objetivo cumplido* 🎉');
+    else if (T.habRest) L.push(`*Para llegar al 100 %:* ${both(T.necM, T.necU, ' y ')} por día ${fromLabel(T.firstOpen)} (faltan ${T.objM ? money(T.faltaM) : `${uSmart(T.faltaU)} ${u(T.faltaU)}`} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'})`);
+    L.push(`Acumulado: ${[T.objM ? `${money(T.vendM)} de ${money(T.objM)} (${pct(T.pM)})` : '', T.objU ? `${uSmart(T.vendU)} de ${uSmart(T.objU)} ${u(T.objU)} (${pct(T.pU)})` : ''].filter(Boolean).join(' · ')}`);
     L.push('', '*Por local*');
     sel.forEach(r => {
-      const M = r.M;
-      L.push(`${dot(stOf(M))} ${r.name}: ${[M.objM ? `${money(M.vendM)} (${pct(M.pM)})` : '', M.objU ? `${uSmart(M.vendU)} ${uName(M.unidad, M.vendU)} (${pct(M.pU)})` : ''].filter(Boolean).join(' · ')}${r.stale ? ` · _dato al ${fDM(M.last ? M.last.fecha : fecha)}_` : ''}`);
+      const M = r.M, U = n => uName(M.unidad, n);
+      const bm = (m, n) => [M.objM ? money(m) : '', M.objU ? `${uSmart(n)} ${U(n)}` : ''].filter(Boolean).join(' / ');
+      const parts = [r.hoy ? `${dia} ${bm(r.hoy.m, r.hoy.u)}${r.hoy.desde ? ` (desde el ${fDM(r.hoy.desde)})` : ''}` : `${dia} _sin dato_`];
+      const pp = proyP(M);
+      if (pp != null) parts.push(`proy. ${pct(pp)}`);
+      if (done(M)) parts.push('cumplido');
+      else if (M.habRest) parts.push(`100 %: ${bm(M.necM, M.necU)} por día`);
+      L.push(`${dot(stOf(M))} *${r.name}* — ${parts.join(' · ')}`);
     });
     return L.join('\n');
   }
@@ -830,82 +946,120 @@
   async function cierreCanvas() {
     const fecha = cierreFecha(), rows = cierreRows(fecha), T = cierreTotals(rows);
     if (!T) return null;
-    const sel = rows.filter(r => r.sel && r.M).sort((a, b) => mainP(b.M) - mainP(a.M));
+    const sel = sortCierre(rows.filter(r => r.sel && r.M));
     try { if (document.fonts) await document.fonts.ready; } catch (e) { }
     const logo = await getLogo();
-    const W = 1080, P = 60, rowH = 132, top = 250, totH = T.objU && T.objM ? 400 : 330;
-    const Hh = top + totH + 40 + sel.length * rowH + 90;
-    const c = document.createElement('canvas'); c.width = W; c.height = Hh;
+    const W = 1080, P = 60, rowH = 190, top = 250;
+    // Se dibuja sobre una capa transparente alta y después se recorta sobre el fondo
+    const c = document.createElement('canvas'); c.width = W; c.height = 1700 + sel.length * rowH;
     const x = c.getContext('2d');
     const F = (w, s) => `${w} ${s}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
     const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
     const glass = (X, Y, w, h, r, hi) => { rr(X, Y, w, h, r); const g = x.createLinearGradient(X, Y, X + w, Y + h); g.addColorStop(0, hi ? 'rgba(249,115,22,0.30)' : 'rgba(255,255,255,0.10)'); g.addColorStop(1, hi ? 'rgba(249,115,22,0.08)' : 'rgba(255,255,255,0.03)'); x.fillStyle = g; x.fill(); x.lineWidth = 2; x.strokeStyle = hi ? 'rgba(253,186,116,0.55)' : 'rgba(255,255,255,0.16)'; x.stroke(); };
     const fit = (s, maxW) => { if (x.measureText(s).width <= maxW) return s; while (s.length > 1 && x.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; };
-    const bar = (X, Y, w, h, p, mark, col) => {
+    const bar = (X, Y, w, h, p, col) => {
       rr(X, Y, w, h, h / 2); x.fillStyle = 'rgba(255,255,255,0.12)'; x.fill();
       const fw = Math.max(h, w * Math.max(0, Math.min(1, p || 0)));
       if (p > 0) { rr(X, Y, fw, h, h / 2); const g = x.createLinearGradient(X, 0, X + fw, 0); g.addColorStop(0, col || '#f97316'); g.addColorStop(1, '#fdba74'); x.fillStyle = g; x.fill(); }
-      if (mark > 0 && mark < 1) { x.fillStyle = '#ffffff'; x.fillRect(X + w * mark - 2, Y - 6, 4, h + 12); }
     };
-    // Fondo GEO
-    const bg = x.createLinearGradient(0, 0, 0, Hh); bg.addColorStop(0, '#0b2a5c'); bg.addColorStop(0.5, '#061a3a'); bg.addColorStop(1, '#030c1a');
-    x.fillStyle = bg; x.fillRect(0, 0, W, Hh);
-    const glow = (cx, cy, r, col) => { const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, W, Hh); };
-    glow(W - 60, 40, 560, 'rgba(249,115,22,0.32)'); glow(40, Hh - 40, 700, 'rgba(56,160,248,0.22)');
+    const txt = (s, X, Y, font, col, align) => { x.font = font; x.fillStyle = col; x.textAlign = align || 'left'; x.fillText(s, X, Y); x.textAlign = 'left'; };
+    const u = n => uName(T.unidad, n);
+    const D = parse(fecha), esHoy = fecha === todayISO();
     // Encabezado
-    const D = parse(fecha);
     if (logo) { x.save(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, 66, 92, 92); x.restore(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.lineWidth = 3; x.strokeStyle = 'rgba(255,255,255,0.85)'; x.stroke(); }
     const tx = P + (logo ? 120 : 0);
-    x.fillStyle = '#fdba74'; x.font = F(800, 24); x.fillText('CIERRE DEL DÍA · GEO', tx, 96);
-    x.fillStyle = '#ffffff'; x.font = F(800, 50); x.fillText(fit(`${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`, W - tx - P), tx, 150);
-    x.fillStyle = 'rgba(219,234,254,0.78)'; x.font = F(500, 26);
-    x.fillText(fit(`${sel.length} ${sel.length === 1 ? 'local' : 'locales'} · ${T.habTrans} de ${T.H} días hábiles · quedan ${T.habRest}`, W - 2 * P), P, 214);
-    // Total
-    const st = status(T.objM ? T.pM : T.pU, T.esperado, T.started, T.ended);
+    txt('CIERRE DEL DÍA · GEO', tx, 96, F(800, 24), '#fdba74');
+    x.font = F(800, 50); txt(fit(`${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`, W - tx - P), tx, 150, F(800, 50), '#ffffff');
+    x.font = F(500, 26); txt(fit(`${sel.length} ${sel.length === 1 ? 'local' : 'locales'} · ${T.habTrans} de ${T.H} días hábiles · quedan ${T.habRest}`, W - 2 * P), P, 214, F(500, 26), 'rgba(219,234,254,0.78)');
+    // Total: tres bloques (vendido en el día, proyección, para el 100 %)
+    const ix = P + 44, iw = W - 2 * P - 88;
+    const LBL = (s, Y) => txt(s, ix, Y, F(800, 21), 'rgba(255,237,213,0.92)');
+    const big = (s, Y, size) => { txt(s, ix, Y, F(900, size || 70), '#ffffff'); x.font = F(900, size || 70); return x.measureText(s).width; };
+    const sep = Y => { x.fillStyle = 'rgba(255,237,213,0.22)'; x.fillRect(ix, Y, iw, 2); };
+    const missing = T.sinHoy.length;
+    const blocks = [];
+    blocks.push({ h: 128 + (missing || T.hoyGap ? 40 : 0), draw: Y => {
+      LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
+      if (!T.hoyN) { big('Sin datos', Y + 100, 60); }
+      else {
+        if (T.objM) big(money(T.hoyM), Y + 100);
+        const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
+        if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
+      }
+      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + 142, F(600, 23), '#fcd34d'); }
+    } });
+    const pc = T.proyP;
+    blocks.push({ h: pc == null ? 128 : 150 + (T.objM && T.objU ? 44 : 0), draw: Y => {
+      LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
+      if (pc == null) { big('—', Y + 100, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 92, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
+      big(T.objM ? money(T.proyM) : `${nf0.format(T.proyU)} ${u(T.proyU)}`, Y + 100);
+      txt(pct(pc), ix + iw, Y + 98, F(900, 56), ST_COL[colP(pc)], 'right');
+      bar(ix, Y + 122, iw, 16, pc, ST_COL[colP(pc)]);
+      if (T.objM && T.objU) { x.font = F(600, 25); txt(fit(`${nf0.format(T.proyU)} ${u(T.proyU)} (${pct(T.proyU / T.objU)})  ·  objetivo ${money(T.objM)}`, iw), ix, Y + 182, F(600, 25), 'rgba(219,234,254,0.85)'); }
+    } });
+    const fin = done(T) || T.ended || !T.habRest;
+    blocks.push({ h: fin ? 128 : 164, draw: Y => {
+      LBL('PARA LLEGAR AL 100 %', Y + 26);
+      if (fin) { big(done(T) ? '¡Objetivo cumplido!' : 'Período terminado', Y + 100, 60); return; }
+      let w0 = 0;
+      if (T.objM) { w0 = big(money(T.necM), Y + 100); txt('por día', ix + w0 + 16, Y + 98, F(700, 28), 'rgba(255,237,213,0.9)'); }
+      const us = T.objU ? `${uSmart(T.necU)} ${u(T.necU)}${T.objM ? '' : ' por día'}` : '';
+      if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
+      x.font = F(600, 25);
+      txt(fit(`Faltan ${T.objM ? money(T.faltaM) : `${uSmart(T.faltaU)} ${u(T.faltaU)}`} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`, iw), ix, Y + 146, F(600, 25), 'rgba(219,234,254,0.88)');
+    } });
+    const acum = [T.objM ? `${money(T.vendM)} de ${money(T.objM)} (${pct(T.pM)})` : '', T.objU ? `${uSmart(T.vendU)} de ${uSmart(T.objU)} ${u(T.objU)}` : ''].filter(Boolean).join('  ·  ');
+    const SEP = 34, headH = 92, footH = 64;
+    const totH = headH + blocks.reduce((a, b) => a + b.h, 0) + SEP * blocks.length + footH;
     let y = top; glass(P, y, W - 2 * P, totH, 40, true);
-    const ix = P + 40, iw = W - 2 * P - 80;
-    x.fillStyle = '#fdba74'; x.font = F(800, 22); x.fillText('TOTAL', ix, y + 54);
-    if (st.t) { x.font = F(700, 22); const tw = x.measureText(st.t).width + 36; rr(ix + iw - tw, y + 28, tw, 38, 19); x.fillStyle = 'rgba(0,0,0,0.25)'; x.fill(); x.fillStyle = ST_COL[st.k]; x.fillText(st.t, ix + iw - tw + 18, y + 55); }
-    let yy = y + 130;
-    const block = (big, small, p) => {
-      x.fillStyle = '#ffffff'; x.font = F(900, 66); x.fillText(big, ix, yy);
-      const bw = x.measureText(big).width;
-      x.fillStyle = 'rgba(219,234,254,0.8)'; x.font = F(600, 28); x.fillText(fit(small, iw - bw - 200), ix + bw + 18, yy);
-      x.fillStyle = ST_COL[status(p, T.esperado, T.started, T.ended).k]; x.font = F(900, 54); const pw = x.measureText(pct(p)).width; x.fillText(pct(p), ix + iw - pw, yy);
-      bar(ix, yy + 22, iw, 16, p, T.esperado, '#f97316');
-      yy += 120;
-    };
-    if (T.objM) block(money(T.vendM), `de ${money(T.objM)}`, T.pM);
-    if (T.objU) block(uSmart(T.vendU), `de ${uSmart(T.objU)} ${uName(T.unidad, T.objU)}`, T.pU);
-    x.fillStyle = 'rgba(219,234,254,0.85)'; x.font = F(600, 25);
-    const nec = !done(T) && T.habRest ? [T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${uName(T.unidad, T.necU)}` : ''].filter(Boolean).join(' · ') : '';
-    x.fillText(fit(`Ritmo ideal ${pct(T.esperado)}${T.proyM != null && T.objM ? `  ·  Proyección ${money(T.proyM)} (${pct(T.proyM / T.objM)})` : ''}`, iw), ix, y + totH - 78);
-    if (nec) { x.fillStyle = '#ffffff'; x.font = F(700, 27); x.fillText(fit(`Para el 100 %: ${nec} por día`, iw), ix, y + totH - 36); }
+    const st = stTot(T);
+    txt(`TOTAL · ${T.n} ${T.n === 1 ? 'LOCAL' : 'LOCALES'}`, ix, y + 58, F(800, 22), '#fdba74');
+    if (st.t) { x.font = F(700, 22); const tw = x.measureText(st.t).width + 36; rr(ix + iw - tw, y + 32, tw, 38, 19); x.fillStyle = 'rgba(0,0,0,0.25)'; x.fill(); txt(st.t, ix + iw - tw + 18, y + 59, F(700, 22), ST_COL[st.k]); }
+    let yy = y + headH;
+    blocks.forEach((b, k) => { b.draw(yy); yy += b.h; sep(yy + SEP / 2 - 1); yy += SEP; });
+    x.font = F(600, 24);
+    const acum2 = [T.objM ? `${money(T.vendM)} (${pct(T.pM)})` : '', T.objU ? `${uSmart(T.vendU)} ${u(T.vendU)}${T.objM ? '' : ` (${pct(T.pU)})`}` : ''].filter(Boolean).join('  ·  ');
+    txt(fit(x.measureText(`Acumulado: ${acum}`).width <= iw ? `Acumulado: ${acum}` : `Acumulado: ${acum2}`, iw), ix, yy + 30, F(600, 24), 'rgba(219,234,254,0.85)');
     // Locales
     y = top + totH + 40;
     sel.forEach(r => {
-      const M = r.M, s = stOf(M), p = mainP(M);
+      const M = r.M, s = stOf(M), pp = proyP(M), U = n => uName(M.unidad, n);
       glass(P, y, W - 2 * P, rowH - 18, 30, false);
       const rx = P + 34, rw = W - 2 * P - 68;
       x.beginPath(); x.arc(rx + 9, y + 44, 9, 0, Math.PI * 2); x.fillStyle = ST_COL[s.k]; x.fill();
-      x.fillStyle = ST_COL[s.k]; x.font = F(900, 40); const ps = pct(p), pw = x.measureText(ps).width; x.fillText(ps, rx + rw - pw, y + 56);
-      x.fillStyle = '#ffffff'; x.font = F(800, 32); x.fillText(fit(r.name, rw - pw - 60), rx + 32, y + 56);
-      x.fillStyle = 'rgba(219,234,254,0.8)'; x.font = F(600, 23);
-      const det = [M.objM ? `${money(M.vendM)} de ${money(M.objM)}` : '', M.objU ? `${uSmart(M.vendU)} de ${uSmart(M.objU)} ${uName(M.unidad, M.objU)}${M.objM ? ` (${pct(M.pU)})` : ''}` : ''].filter(Boolean).join('  ·  ');
-      x.fillText(fit(det + (r.stale ? `  ·  dato al ${fDM(M.last ? M.last.fecha : fecha)}` : ''), rw - 10), rx, y + 92);
-      bar(rx, y + 102, rw, 6, p, M.esperado, ST_COL[s.k]);
+      x.font = F(900, 40); const ps = pp == null ? pct(mainP(M)) : pct(pp), pw = x.measureText(ps).width;
+      txt(ps, rx + rw, y + 56, F(900, 40), ST_COL[pp == null ? s.k : colP(pp)], 'right');
+      txt(pp == null ? 'cumplido' : 'proyectado', rx + rw, y + 86, F(600, 19), 'rgba(219,234,254,0.6)', 'right');
+      x.font = F(800, 32); txt(fit(r.name, rw - pw - 70), rx + 32, y + 56, F(800, 32), '#ffffff');
+      const bm = (m, n) => [M.objM ? money(m) : '', M.objU ? `${uSmart(n)} ${U(n)}` : ''].filter(Boolean).join(' · ');
+      x.font = F(600, 23);
+      const hoyS = r.hoy ? `${esHoy ? 'Hoy' : cap(fDow(fecha))} ${bm(r.hoy.m, r.hoy.u)}${r.hoy.desde ? ` (desde el ${fDM(r.hoy.desde)})` : ''}` : `${esHoy ? 'Hoy' : cap(fDow(fecha))} sin dato${M.last ? ` (último ${fDM(M.last.fecha)})` : ''}`;
+      const acS = `Llevan ${M.objM ? `${money(M.vendM)} (${pct(M.pM)})` : `${uSmart(M.vendU)} ${U(M.vendU)} (${pct(M.pU)})`}`;
+      x.font = F(600, 23); const l1 = x.measureText(`${hoyS}  ·  ${acS}`).width <= rw - 150 ? `${hoyS}  ·  ${acS}` : fit(hoyS, rw - 150);
+      txt(l1, rx, y + 98, F(600, 23), r.hoy ? 'rgba(219,234,254,0.85)' : '#fcd34d');
+      const need = done(M) ? 'Objetivo cumplido' : !M.habRest ? 'Período terminado' : `Para el 100 %: ${[M.objM ? money(M.necM) : '', M.objU ? `${uSmart(M.necU)} ${U(M.necU)}` : ''].filter(Boolean).join(' y ')} por día`;
+      x.font = F(700, 24); txt(fit(need, rw), rx, y + 134, F(700, 24), '#ffffff');
+      bar(rx, y + 150, rw, 7, pp == null ? mainP(M) : pp, ST_COL[pp == null ? s.k : colP(pp)]);
       y += rowH;
     });
-    // Pie
+    // Fondo GEO y recorte
+    const Hh = y + 70;
+    const out = document.createElement('canvas'); out.width = W; out.height = Hh;
+    const o = out.getContext('2d');
+    const bg = o.createLinearGradient(0, 0, 0, Hh); bg.addColorStop(0, '#0b2a5c'); bg.addColorStop(0.5, '#061a3a'); bg.addColorStop(1, '#030c1a');
+    o.fillStyle = bg; o.fillRect(0, 0, W, Hh);
+    const glow = (cx, cy, r, col) => { const g = o.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); o.fillStyle = g; o.fillRect(0, 0, W, Hh); };
+    glow(W - 60, 40, 560, 'rgba(249,115,22,0.32)'); glow(40, Hh - 40, 700, 'rgba(56,160,248,0.22)');
+    o.drawImage(c, 0, 0);
     const now = new Date();
-    x.fillStyle = 'rgba(219,234,254,0.55)'; x.font = F(500, 22);
-    x.fillText(`proyectadosgeo.vercel.app · generado ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`, P, Hh - 40);
-    return c;
+    o.fillStyle = 'rgba(219,234,254,0.55)'; o.font = F(500, 22);
+    o.fillText(`proyectadosgeo.vercel.app · generado ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`, P, Hh - 40);
+    return out;
   }
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + (r.M.last ? r.M.last.fecha : '') : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);

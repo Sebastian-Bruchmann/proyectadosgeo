@@ -14,6 +14,7 @@ Publicada en **https://proyectadosgeo.vercel.app**
 - Menú de tres rayas con todos los objetivos (en curso, próximos y terminados).
 - Contraseña opcional por objetivo: "ver y editar" o "solo editar". La valida el servidor.
 - Resumen para copiar a WhatsApp y descarga del plan en CSV.
+- **Cierre del día**: varios locales juntos (se eligen cuáles) con lo vendido en el día, la proyección a fin de mes y cuánto hay que vender por día para llegar al 100 %. Sale como imagen o texto para WhatsApp.
 
 ## Cómo está armado
 
