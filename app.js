@@ -92,6 +92,7 @@
     formFecha: null, formEstado: null, formErr: '', confirmDel: null,
     enter: true, draw: true, bump: false, celebrate: false,
     llaves: {}, unlockErr: '', unlockBusy: false,
+    view: 'main', cierreFecha: null, cierreEdit: false, cierreErr: '', cierreEstado: null,
   };
   let lastModel = null, rendering = false, needsRender = false;
   const PREF_KEY = 'proyectados-prefs', CACHE_KEY = 'proyectados-cache', PEND_KEY = 'proyectados-pendientes', KEYS_KEY = 'proyectados-llaves', MIG_KEY = 'proyectados-base-nueva';
@@ -237,7 +238,7 @@
   const avancesOf = meta => [...S.avances.values()].filter(a => a.metaId === meta.id && isISO(a.fecha) && a.fecha >= meta.desde && a.fecha <= meta.hasta).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   /* ---------- cálculos ---------- */
-  function buildModel(meta) {
+  function buildModel(meta, asOf) {
     const dias = Array.isArray(meta.dias) && meta.dias.length ? meta.dias.map(Number) : [1, 2, 3, 4, 5, 6];
     const cerr = new Set(Array.isArray(meta.cerrados) ? meta.cerrados : []);
     const objM = Math.max(0, +meta.objMonto || 0), objU = Math.max(0, +meta.objUnidades || 0);
@@ -247,8 +248,9 @@
     const habHasta = new Map(); let hh = 0;
     days.forEach(s => { if (isWork(s)) hh++; habHasta.set(s, hh); });
     const transAt = (f, cerrado) => { if (f < meta.desde) return 0; if (f > meta.hasta) return H; const prev = habHasta.get(f) - (isWork(f) ? 1 : 0); return prev + (cerrado && isWork(f) ? 1 : 0); };
-    const av = avancesOf(meta);
-    const t = todayISO();
+    // asOf: calcular "al día" de una fecha (cierre de un día pasado); sin asOf, al día de hoy
+    const av = asOf ? avancesOf(meta).filter(a => a.fecha <= asOf) : avancesOf(meta);
+    const t = asOf || todayISO();
     const last = av[av.length - 1] || null;
     const ref = last
       ? { fecha: last.fecha, m: +last.monto || 0, u: +last.unidades || 0, cerrado: !!last.cerrado }
@@ -379,7 +381,7 @@
       <div class="entry-grid">
         <label class="fld date"><span>Al día</span><input type="date" id="f-fecha" min="${meta.desde}" max="${meta.hasta}" value="${fecha}"></label>
         ${M.objM ? `<label class="fld big"><span>Monto vendido acumulado</span><input id="f-m" inputmode="decimal" autocomplete="off" placeholder="$ 0" value="${base ? nf0.format(base.monto) : ''}"></label>` : ''}
-        ${M.objU ? `<label class="fld big"><span>${esc(M.unidad)} vendidos acumulados</span><input id="f-u" inputmode="numeric" autocomplete="off" placeholder="0" value="${base ? nf0.format(base.unidades) : ''}"></label>` : ''}
+        ${M.objU ? `<label class="fld big"><span>${esc(M.unidad)} (acumulado)</span><input id="f-u" inputmode="numeric" autocomplete="off" placeholder="0" value="${base ? nf0.format(base.unidades) : ''}"></label>` : ''}
         <button type="button" class="btn primary lg" id="f-save">Calcular</button>
       </div>
       <fieldset class="estado">
@@ -411,7 +413,7 @@
       foot: [[ideal + 'Ritmo ideal a la fecha', pct(M.esperado)], ['Proyección al cierre', M.proyM != null ? `${money(M.proyM)} <small>${pct(M.proyM / M.objM)}</small>` : '—'], ['Faltan', money(M.faltaM)]],
     }));
     if (M.objU) out.push(meterHTML({
-      i: i + 1, key: 'pU', label: `${esc(M.unidad)} vendidos`, p: M.pU, mark: M.esperado, st: status(M.pU, M.esperado, M.started, M.ended),
+      i: i + 1, key: 'pU', label: `${esc(M.unidad)}`, p: M.pU, mark: M.esperado, st: status(M.pU, M.esperado, M.started, M.ended),
       sub: `<b>${num('vU', M.vendU, 'units')}</b> de ${uSmart(M.objU)} ${esc(uName(M.unidad, M.objU))}`, aria: `${pct(M.pU)} del objetivo en unidades`,
       foot: [[ideal + 'Ritmo ideal a la fecha', pct(M.esperado)], ['Proyección al cierre', M.proyU != null ? `${uSmart(M.proyU)} <small>${pct(M.proyU / M.objU)}</small>` : '—'], ['Faltan', `${uSmart(M.faltaU)} ${esc(uName(M.unidad, M.faltaU))}`]],
     }));
@@ -617,6 +619,7 @@
   function mainHTML() {
     lastModel = null;
     if (!S.loaded) return loadingHTML();
+    if (S.view === 'cierre') return cierreHTML();
     const meta = currentMeta();
     if (!meta) return emptyHTML();
     if (hidden(meta)) return lockedHeadHTML(meta, 0) + unlockHTML(meta, 1, false);
@@ -636,6 +639,328 @@
         </div>
         <textarea id="copy-fallback" readonly hidden aria-label="Resumen para copiar"></textarea>`;
   }
+
+  /* ---------- cierre del día: varios locales juntos ---------- */
+  const CIERRE_KEY = 'proyectados-cierre';
+  const CP = (() => { try { const o = JSON.parse(lsGet(CIERRE_KEY) || '{}'); return { sel: (o && o.sel) || {} }; } catch (e) { return { sel: {} }; } })();
+  const saveCierre = () => lsSet(CIERRE_KEY, JSON.stringify(CP));
+  const nrm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  /* Nombre del local sin el mes del objetivo: "Dean Funes (Noviembre)" -> "Dean Funes". "9 de Julio" queda igual. */
+  function localName(m) {
+    const meses = [...new Set([m.desde, m.hasta].filter(isISO).map(s => MESES[parse(s).getMonth()]))];
+    let s = String(m.nombre || '');
+    if (meses.length) s = s.replace(new RegExp('[\\s\\-–·,]*\\(?\\s*\\b(' + meses.join('|') + ')\\b(\\s+(de\\s+)?20\\d\\d)?\\s*\\)?', 'gi'), ' ');
+    s = s.replace(/\(\s*20\d\d\s*\)/g, ' ').replace(/[\s\-–·,]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+    return s || String(m.nombre || 'Sin nombre');
+  }
+  // Por defecto entran todos menos San Martín y Dean Funes; después se recuerda lo que elijas.
+  const isSel = key => Object.prototype.hasOwnProperty.call(CP.sel, key) ? !!CP.sel[key] : !/san martin|dean funes/.test(key);
+  const mainP = M => M.objM ? M.pM : M.pU;
+  const cierreFecha = () => (S.cierreFecha && isISO(S.cierreFecha)) ? S.cierreFecha : todayISO();
+  function cierreRows(fecha) {
+    return sortedMetas().filter(m => m.desde <= fecha && fecha <= m.hasta).map(m => {
+      const name = localName(m), key = nrm(name), locked = hidden(m);
+      const M = locked ? null : buildModel(m, fecha);
+      return { m, name, key, locked, M, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  }
+  function cierreTotals(rows) {
+    const Ms = rows.filter(r => r.sel && r.M).map(r => r.M);
+    if (!Ms.length) return null;
+    const sum = f => Ms.reduce((x, M) => x + (f(M) || 0), 0);
+    const objM = sum(M => M.objM), objU = sum(M => M.objU), vendM = sum(M => M.vendM), vendU = sum(M => M.vendU);
+    const w = M => objM ? M.objM : M.objU, wt = Ms.reduce((x, M) => x + w(M), 0) || 1;
+    const habRest = Math.max(...Ms.map(M => M.habRest)), H = Math.max(...Ms.map(M => M.H));
+    const T = {
+      n: Ms.length, objM, objU, vendM, vendU, H, habRest, habTrans: H - habRest,
+      pM: objM ? vendM / objM : null, pU: objU ? vendU / objU : null,
+      esperado: Ms.reduce((x, M) => x + w(M) * M.esperado, 0) / wt,
+      started: Ms.some(M => M.started), ended: Ms.every(M => M.ended),
+      proyM: sum(M => M.proyM != null ? M.proyM : M.vendM), proyU: sum(M => M.proyU != null ? M.proyU : M.vendU),
+      faltaM: Math.max(0, objM - vendM), faltaU: Math.max(0, objU - vendU),
+      necM: sum(M => M.habRest ? M.necM : 0), necU: sum(M => M.habRest ? M.necU : 0),
+      unidad: Ms[0].unidad,
+    };
+    if (!T.started) { T.proyM = null; T.proyU = null; }
+    return T;
+  }
+  const stOf = M => status(mainP(M), M.esperado, M.started, M.ended);
+  const ICO_CIERRE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5"/><path d="M8.5 11.5h7M8.5 15.5h4.5"/></svg>';
+  const ICO_SHARE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m0 0 4 4m-4-4L8 7"/><path d="M5 12v6.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V12"/></svg>';
+  const ICO_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
+
+  function cierreHTML() {
+    const fecha = cierreFecha(), t = todayISO();
+    const rows = cierreRows(fecha), T = cierreTotals(rows);
+    const D = parse(fecha);
+    const titulo = `${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`;
+    const sel = rows.filter(r => r.sel && r.M);
+    const staleN = sel.filter(r => r.stale).length;
+    let h = `<section class="head rise" style="--i:0">
+      <div><p class="eyebrow">Cierre del día${fecha === t ? ' · hoy' : ''}</p>
+        <h2>${titulo}</h2>
+        <p class="sub">${rows.length ? `${sel.length} de ${rows.length} ${rows.length === 1 ? 'objetivo' : 'objetivos'} en el cierre${T ? ` · quedan ${T.habRest} días hábiles` : ''}` : 'No hay objetivos en curso para esta fecha'}</p>
+        <div class="head-ctrl">
+          <button type="button" class="btn sm" data-go="main">← Volver</button>
+          <label class="ci-date"><span>Fecha</span><input type="date" id="ci-fecha" value="${fecha}"></label>
+        </div></div>
+    </section>`;
+    if (!rows.length) return h + `<section class="glass panel rise" style="--i:1"><p class="muted">Para armar el cierre tiene que haber objetivos cuyo período incluya el ${fDow(fecha)}.</p></section>`;
+    h += `<section class="glass panel ci-sel rise" style="--i:1" aria-labelledby="ci-sel-h">
+      <div class="panel-head"><div><h2 id="ci-sel-h">¿Qué locales entran?</h2><p>Tocá para sumar o sacar. Queda guardado para los próximos cierres en este dispositivo.</p></div>
+        <div class="seg" role="group" aria-label="Selección rápida"><button type="button" data-csel="all">Todos</button><button type="button" data-csel="none">Ninguno</button></div></div>
+      <div class="ci-chips">${rows.map(r => {
+        const st = r.M ? stOf(r.M) : { k: '' };
+        return `<label class="opt ci-chip${r.locked ? ' locked' : ''}" title="${r.locked ? 'Tiene contraseña: desbloquealo para sumarlo' : esc(r.m.nombre)}"><input type="checkbox" data-ckey="${esc(r.key)}"${r.sel ? ' checked' : ''}${r.locked ? ' disabled' : ''}><span>${r.locked ? ICO.lock : `<i class="dot ${st.k}"></i>`}${esc(r.name)}</span></label>`;
+      }).join('')}</div>
+      <div class="ci-actions">
+        <button type="button" class="btn primary lg" id="ci-share"${T ? '' : ' disabled'}>${ICO_SHARE}Enviar imagen</button>
+        <button type="button" class="btn lg" id="ci-copy"${T ? '' : ' disabled'}>${ICO_COPY}Copiar texto</button>
+        <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Actualizar ventas'}</button>
+      </div>
+      ${staleN && !S.cierreEdit ? `<p class="ci-warn">${staleN === 1 ? '1 local no tiene' : `${staleN} locales no tienen`} dato del ${fecha === t ? 'día de hoy' : fDow(fecha)}: se usa el último que cargaste. Tocá "Actualizar ventas" para ponerlo al día.</p>` : ''}
+    </section>`;
+    if (!T) return h + `<section class="glass panel rise" style="--i:2"><p class="muted">Elegí al menos un local para armar el cierre.</p></section>`;
+    h += `<section class="summary"><div class="meters">${metersHTML(T, 2)}</div>${cierreGoalHTML(T, 4)}</section>`;
+    h += cierreTableHTML(fecha, sel, T, 5);
+    h += `<section class="glass panel ci-prev rise" style="--i:6" aria-labelledby="ci-prev-h">
+      <div class="panel-head"><div><h2 id="ci-prev-h">Así sale la imagen</h2><p>Es lo que se manda con "Enviar imagen". En el celu se abre para compartir directo a WhatsApp; en la compu se descarga.</p></div></div>
+      <div class="ci-img"><img id="ci-img" alt="Vista previa del cierre del día"><p class="muted" id="ci-img-wait">Armando la imagen…</p></div>
+    </section>
+    <textarea id="copy-fallback" readonly hidden aria-label="Texto del cierre para copiar"></textarea>`;
+    return h;
+  }
+  function cierreGoalHTML(T, i) {
+    const u = n => esc(uName(T.unidad, n));
+    const orbs = '<span class="orb o1" aria-hidden="true"></span><span class="orb o2" aria-hidden="true"></span>';
+    const open = `<aside class="goal rise" style="--i:${i}" data-tilt aria-label="Lo que falta entre los locales elegidos">${orbs}<p class="g-eyebrow">Para llegar al 100 %</p><p class="g-sub">Entre los ${T.n} ${T.n === 1 ? 'local elegido' : 'locales elegidos'}</p><hr>`;
+    if (done(T) || T.ended || !T.habRest) {
+      return `${open}<p class="g-big">${done(T) ? '¡Objetivo cumplido!' : 'Período terminado'}</p>${T.objM ? gRow('Monto', pct(T.pM)) : ''}${T.objU ? gRow(esc(T.unidad), pct(T.pU)) : ''}</aside>`;
+    }
+    return `${open}
+      ${T.objM ? gRow('Faltan', money(T.faltaM)) : ''}
+      ${T.objU ? gRow(T.objM ? '' : 'Faltan', `${uSmart(T.faltaU)} ${u(T.faltaU)}`) : ''}
+      ${gRow('Días hábiles que quedan', T.habRest)}
+      <hr>
+      <p class="g-label">Por día, entre todos</p>
+      ${T.objM ? `<p class="g-big">${num('cnecM', T.necM, 'money')}</p>` : ''}
+      ${T.objU ? `<p class="${T.objM ? 'g-mid' : 'g-big'}">${num('cnecU', T.necU, 'units')} ${u(T.necU)}</p>` : ''}
+      ${T.proyM != null && T.objM ? `<hr>${gRow('Proyección al cierre', `${money(T.proyM)} · ${pct(T.proyM / T.objM)}`)}` : ''}
+    </aside>`;
+  }
+  function cierreTableHTML(fecha, sel, T, i) {
+    const t = todayISO(), U = esc(T.unidad);
+    const anyM = sel.some(r => r.M.objM), anyU = sel.some(r => r.M.objU);
+    const edit = S.cierreEdit;
+    const cerrado = S.cierreEstado != null ? S.cierreEstado === 'cerrado' : (fecha < t || new Date().getHours() >= 21);
+    const diaTxt = fecha === t ? 'hoy' : `el ${fDow(fecha)}`;
+    const list = edit ? sel : sel.slice().sort((a, b) => mainP(b.M) - mainP(a.M));
+    const body = list.map((r, k) => {
+      const M = r.M, st = stOf(M), id = esc(r.m.id), can = canEdit(r.m);
+      const there = S.avances.get(r.m.id + '__' + fecha), base = there || M.last;
+      const nec = done(M) ? 'Cumplido' : !M.habRest ? '—' : [M.objM ? money(M.necM) : '', M.objU ? `${uSmart(M.necU)} ${esc(uName(M.unidad, M.necU))}` : ''].filter(Boolean).join(' · ');
+      const dato = M.last ? (r.stale ? `<span class="chip warn">${fDM(M.last.fecha)}</span>` : `${fDM(M.last.fecha)}${M.last.cerrado ? '' : ' <small class="muted">en curso</small>'}`) : '<span class="chip warn">sin datos</span>';
+      const cM = !M.objM ? '<td>—</td>' : edit ? `<td data-l="Monto acumulado"><input class="qin" id="ci-m-${id}" inputmode="decimal" autocomplete="off" placeholder="${base ? nf0.format(base.monto) : '0'}" aria-label="Monto acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>` : `<td data-l="Vendido">${money(M.vendM)} <small class="muted">${pct(M.pM)}</small></td>`;
+      const cU = !anyU ? '' : !M.objU ? '<td>—</td>' : edit ? `<td data-l="${U} (acumulado)"><input class="qin qty" id="ci-u-${id}" inputmode="numeric" autocomplete="off" placeholder="${base ? nf0.format(base.unidades) : '0'}" aria-label="${U} acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>` : `<td data-l="${U}">${uSmart(M.vendU)} <small class="muted">${pct(M.pU)}</small></td>`;
+      return `<tr style="--r:${Math.min(k, 24)}"><th scope="row" class="l"><i class="dot ${st.k}" aria-hidden="true"></i>${esc(r.name)}${can ? '' : ` <span class="muted" title="Solo lectura sin contraseña">${ICO.lock}</span>`}</th>
+        ${anyM ? cM : ''}${cU}
+        ${edit ? `<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td>` : `<td data-l="Por día para el 100 %">${nec}</td><td class="st">${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</td><td data-l="Dato al">${dato}</td>`}</tr>`;
+    }).join('');
+    const head = edit
+      ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}<th scope="col">Último dato</th></tr>`
+      : `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Vendido</th>' : ''}${anyU ? `<th scope="col">${U}</th>` : ''}<th scope="col">Por día para el 100 %</th><th scope="col">Estado</th><th scope="col">Dato al</th></tr>`;
+    const foot = edit ? '' : `<tfoot><tr><th scope="row" class="l">Total</th>${anyM ? `<td data-l="Vendido">${money(T.vendM)} <small class="muted">${pct(T.pM)}</small></td>` : ''}${anyU ? `<td data-l="${U}">${uSmart(T.vendU)} <small class="muted">${pct(T.pU)}</small></td>` : ''}<td data-l="Por día para el 100 %">${T.habRest && !done(T) ? [T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${esc(uName(T.unidad, T.necU))}` : ''].filter(Boolean).join(' · ') : '—'}</td><td colspan="2" class="hide-sm"></td></tr></tfoot>`;
+    return `<section class="glass panel ${edit ? 'entry ' : ''}rise" style="--i:${i}" aria-labelledby="ci-t-h">
+      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Actualizar ventas de los locales' : 'Por local'}</h2><p>${edit ? 'Escribí el vendido acumulado del mes de cada local. El número gris es el último dato: si dejás un campo vacío, queda como está.' : 'Ordenados por avance. El punto de color es el estado contra el ritmo ideal.'}</p></div></div>
+      ${edit ? `<fieldset class="estado"><legend>¿${fecha === t ? 'Hoy' : cap(fDow(fecha))} ya cerró?</legend>
+        <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label>
+        <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label></fieldset>` : ''}
+      <div class="tbl-wrap"><table class="ci-table${edit ? ' edit' : ''}"><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>
+      ${edit ? `${S.cierreErr ? `<p class="err" role="alert">${esc(S.cierreErr)}</p>` : ''}<div class="q-actions"><button type="button" class="btn" id="ci-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ci-save">Guardar y actualizar cierre</button></div>` : ''}
+    </section>`;
+  }
+  function saveCierreVentas() {
+    const fecha = cierreFecha();
+    const rows = cierreRows(fecha).filter(r => r.sel && r.M && canEdit(r.m));
+    const cerrado = !!($('#ci-cerrado') && $('#ci-cerrado').checked);
+    const now = new Date().toISOString();
+    let n = 0;
+    rows.forEach(r => {
+      const im = document.getElementById('ci-m-' + r.m.id), iu = document.getElementById('ci-u-' + r.m.id);
+      const m = im ? parseNum(im.value) : null, u = iu ? parseNum(iu.value) : null;
+      if (m == null && u == null) return;
+      const id = r.m.id + '__' + fecha, base = S.avances.get(id) || r.M.last;
+      [im, iu].forEach(el => { if (el) el.dataset.dirty = ''; });
+      put('avances', id, { metaId: r.m.id, fecha, cerrado, actualizado: now,
+        monto: Math.max(0, Math.round(m != null ? m : base ? +base.monto || 0 : 0)),
+        unidades: Math.max(0, Math.round(u != null ? u : base ? +base.unidades || 0 : 0)) });
+      n++;
+    });
+    if (!n) { S.cierreErr = 'Escribí al menos un monto o una cantidad.'; render(); return; }
+    S.cierreErr = ''; S.cierreEdit = false; S.cierreEstado = null; S.bump = true;
+    render();
+    toast(`Ventas guardadas: ${n} ${n === 1 ? 'local' : 'locales'}`);
+    window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+  }
+  function cierreText() {
+    const fecha = cierreFecha(), rows = cierreRows(fecha), T = cierreTotals(rows);
+    if (!T) return '';
+    const sel = rows.filter(r => r.sel && r.M).sort((a, b) => mainP(b.M) - mainP(a.M));
+    const u = n => uName(T.unidad, n);
+    const dot = st => st.k === 'ok' ? '🟢' : st.k === 'warn' ? '🟡' : st.k === 'bad' ? '🔴' : '⚪';
+    const D = parse(fecha);
+    const L = [`*Cierre ${cap(DOW_L[D.getDay()])} ${fDM(fecha)}* · ${sel.map(r => r.name).join(', ')}`, ''];
+    L.push('*Total*');
+    if (T.objM) L.push(`Vendido: ${money(T.vendM)} de ${money(T.objM)} (*${pct(T.pM)}*)`);
+    if (T.objU) L.push(`${T.unidad}: ${uSmart(T.vendU)} de ${uSmart(T.objU)} (*${pct(T.pU)}*)`);
+    L.push(`Ritmo ideal: ${pct(T.esperado)}${T.proyM != null && T.objM ? ` · Proyección: ${money(T.proyM)} (${pct(T.proyM / T.objM)})` : ''}`);
+    if (!done(T) && T.habRest) L.push(`Para el 100 %: ${[T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${u(T.necU)}` : ''].filter(Boolean).join(' y ')} por día (quedan ${T.habRest} días hábiles)`);
+    L.push('', '*Por local*');
+    sel.forEach(r => {
+      const M = r.M;
+      L.push(`${dot(stOf(M))} ${r.name}: ${[M.objM ? `${money(M.vendM)} (${pct(M.pM)})` : '', M.objU ? `${uSmart(M.vendU)} ${uName(M.unidad, M.vendU)} (${pct(M.pU)})` : ''].filter(Boolean).join(' · ')}${r.stale ? ` · _dato al ${fDM(M.last ? M.last.fecha : fecha)}_` : ''}`);
+    });
+    return L.join('\n');
+  }
+
+  /* Imagen del cierre (canvas) para mandar por WhatsApp */
+  let logoP = null;
+  const getLogo = () => logoP || (logoP = new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = '/geo-logo.png'; }));
+  const ST_COL = { ok: '#34d399', warn: '#fbbf24', bad: '#fb7185', '': '#93c5fd' };
+  async function cierreCanvas() {
+    const fecha = cierreFecha(), rows = cierreRows(fecha), T = cierreTotals(rows);
+    if (!T) return null;
+    const sel = rows.filter(r => r.sel && r.M).sort((a, b) => mainP(b.M) - mainP(a.M));
+    try { if (document.fonts) await document.fonts.ready; } catch (e) { }
+    const logo = await getLogo();
+    const W = 1080, P = 60, rowH = 132, top = 250, totH = T.objU && T.objM ? 400 : 330;
+    const Hh = top + totH + 40 + sel.length * rowH + 90;
+    const c = document.createElement('canvas'); c.width = W; c.height = Hh;
+    const x = c.getContext('2d');
+    const F = (w, s) => `${w} ${s}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
+    const glass = (X, Y, w, h, r, hi) => { rr(X, Y, w, h, r); const g = x.createLinearGradient(X, Y, X + w, Y + h); g.addColorStop(0, hi ? 'rgba(249,115,22,0.30)' : 'rgba(255,255,255,0.10)'); g.addColorStop(1, hi ? 'rgba(249,115,22,0.08)' : 'rgba(255,255,255,0.03)'); x.fillStyle = g; x.fill(); x.lineWidth = 2; x.strokeStyle = hi ? 'rgba(253,186,116,0.55)' : 'rgba(255,255,255,0.16)'; x.stroke(); };
+    const fit = (s, maxW) => { if (x.measureText(s).width <= maxW) return s; while (s.length > 1 && x.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; };
+    const bar = (X, Y, w, h, p, mark, col) => {
+      rr(X, Y, w, h, h / 2); x.fillStyle = 'rgba(255,255,255,0.12)'; x.fill();
+      const fw = Math.max(h, w * Math.max(0, Math.min(1, p || 0)));
+      if (p > 0) { rr(X, Y, fw, h, h / 2); const g = x.createLinearGradient(X, 0, X + fw, 0); g.addColorStop(0, col || '#f97316'); g.addColorStop(1, '#fdba74'); x.fillStyle = g; x.fill(); }
+      if (mark > 0 && mark < 1) { x.fillStyle = '#ffffff'; x.fillRect(X + w * mark - 2, Y - 6, 4, h + 12); }
+    };
+    // Fondo GEO
+    const bg = x.createLinearGradient(0, 0, 0, Hh); bg.addColorStop(0, '#0b2a5c'); bg.addColorStop(0.5, '#061a3a'); bg.addColorStop(1, '#030c1a');
+    x.fillStyle = bg; x.fillRect(0, 0, W, Hh);
+    const glow = (cx, cy, r, col) => { const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, W, Hh); };
+    glow(W - 60, 40, 560, 'rgba(249,115,22,0.32)'); glow(40, Hh - 40, 700, 'rgba(56,160,248,0.22)');
+    // Encabezado
+    const D = parse(fecha);
+    if (logo) { x.save(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, 66, 92, 92); x.restore(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.lineWidth = 3; x.strokeStyle = 'rgba(255,255,255,0.85)'; x.stroke(); }
+    const tx = P + (logo ? 120 : 0);
+    x.fillStyle = '#fdba74'; x.font = F(800, 24); x.fillText('CIERRE DEL DÍA · GEO', tx, 96);
+    x.fillStyle = '#ffffff'; x.font = F(800, 50); x.fillText(fit(`${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`, W - tx - P), tx, 150);
+    x.fillStyle = 'rgba(219,234,254,0.78)'; x.font = F(500, 26);
+    x.fillText(fit(`${sel.length} ${sel.length === 1 ? 'local' : 'locales'} · ${T.habTrans} de ${T.H} días hábiles · quedan ${T.habRest}`, W - 2 * P), P, 214);
+    // Total
+    const st = status(T.objM ? T.pM : T.pU, T.esperado, T.started, T.ended);
+    let y = top; glass(P, y, W - 2 * P, totH, 40, true);
+    const ix = P + 40, iw = W - 2 * P - 80;
+    x.fillStyle = '#fdba74'; x.font = F(800, 22); x.fillText('TOTAL', ix, y + 54);
+    if (st.t) { x.font = F(700, 22); const tw = x.measureText(st.t).width + 36; rr(ix + iw - tw, y + 28, tw, 38, 19); x.fillStyle = 'rgba(0,0,0,0.25)'; x.fill(); x.fillStyle = ST_COL[st.k]; x.fillText(st.t, ix + iw - tw + 18, y + 55); }
+    let yy = y + 130;
+    const block = (big, small, p) => {
+      x.fillStyle = '#ffffff'; x.font = F(900, 66); x.fillText(big, ix, yy);
+      const bw = x.measureText(big).width;
+      x.fillStyle = 'rgba(219,234,254,0.8)'; x.font = F(600, 28); x.fillText(fit(small, iw - bw - 200), ix + bw + 18, yy);
+      x.fillStyle = ST_COL[status(p, T.esperado, T.started, T.ended).k]; x.font = F(900, 54); const pw = x.measureText(pct(p)).width; x.fillText(pct(p), ix + iw - pw, yy);
+      bar(ix, yy + 22, iw, 16, p, T.esperado, '#f97316');
+      yy += 120;
+    };
+    if (T.objM) block(money(T.vendM), `de ${money(T.objM)}`, T.pM);
+    if (T.objU) block(uSmart(T.vendU), `de ${uSmart(T.objU)} ${uName(T.unidad, T.objU)}`, T.pU);
+    x.fillStyle = 'rgba(219,234,254,0.85)'; x.font = F(600, 25);
+    const nec = !done(T) && T.habRest ? [T.objM ? money(T.necM) : '', T.objU ? `${uSmart(T.necU)} ${uName(T.unidad, T.necU)}` : ''].filter(Boolean).join(' · ') : '';
+    x.fillText(fit(`Ritmo ideal ${pct(T.esperado)}${T.proyM != null && T.objM ? `  ·  Proyección ${money(T.proyM)} (${pct(T.proyM / T.objM)})` : ''}`, iw), ix, y + totH - 78);
+    if (nec) { x.fillStyle = '#ffffff'; x.font = F(700, 27); x.fillText(fit(`Para el 100 %: ${nec} por día`, iw), ix, y + totH - 36); }
+    // Locales
+    y = top + totH + 40;
+    sel.forEach(r => {
+      const M = r.M, s = stOf(M), p = mainP(M);
+      glass(P, y, W - 2 * P, rowH - 18, 30, false);
+      const rx = P + 34, rw = W - 2 * P - 68;
+      x.beginPath(); x.arc(rx + 9, y + 44, 9, 0, Math.PI * 2); x.fillStyle = ST_COL[s.k]; x.fill();
+      x.fillStyle = ST_COL[s.k]; x.font = F(900, 40); const ps = pct(p), pw = x.measureText(ps).width; x.fillText(ps, rx + rw - pw, y + 56);
+      x.fillStyle = '#ffffff'; x.font = F(800, 32); x.fillText(fit(r.name, rw - pw - 60), rx + 32, y + 56);
+      x.fillStyle = 'rgba(219,234,254,0.8)'; x.font = F(600, 23);
+      const det = [M.objM ? `${money(M.vendM)} de ${money(M.objM)}` : '', M.objU ? `${uSmart(M.vendU)} de ${uSmart(M.objU)} ${uName(M.unidad, M.objU)}${M.objM ? ` (${pct(M.pU)})` : ''}` : ''].filter(Boolean).join('  ·  ');
+      x.fillText(fit(det + (r.stale ? `  ·  dato al ${fDM(M.last ? M.last.fecha : fecha)}` : ''), rw - 10), rx, y + 92);
+      bar(rx, y + 102, rw, 6, p, M.esperado, ST_COL[s.k]);
+      y += rowH;
+    });
+    // Pie
+    const now = new Date();
+    x.fillStyle = 'rgba(219,234,254,0.55)'; x.font = F(500, 22);
+    x.fillText(`proyectadosgeo.vercel.app · generado ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`, P, Hh - 40);
+    return c;
+  }
+  const CI = { url: null, blob: null, name: '', sig: '', t: null };
+  function cierreSig() {
+    const fecha = cierreFecha();
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + (r.M.last ? r.M.last.fecha : '') : '')).join(',');
+  }
+  function scheduleCierreImage() {
+    clearTimeout(CI.t);
+    CI.t = setTimeout(async () => {
+      if (S.view !== 'cierre') return;
+      const sig = cierreSig();
+      const img = $('#ci-img'), wait = $('#ci-img-wait');
+      if (sig === CI.sig && CI.url) { if (img) { img.src = CI.url; img.hidden = false; } if (wait) wait.hidden = true; return; }
+      const c = await cierreCanvas();
+      if (!c) return;
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      if (!blob) return;
+      if (CI.url) URL.revokeObjectURL(CI.url);
+      CI.blob = blob; CI.url = URL.createObjectURL(blob); CI.sig = sig; CI.name = `cierre-geo-${cierreFecha()}.png`;
+      const im = $('#ci-img'), wt = $('#ci-img-wait');
+      if (im) { im.src = CI.url; im.hidden = false; }
+      if (wt) wt.hidden = true;
+    }, 120);
+  }
+  async function shareCierre() {
+    if (!CI.blob || CI.sig !== cierreSig()) { toast('Un segundo, estoy armando la imagen…'); scheduleCierreImage(); return; }
+    const file = new File([CI.blob], CI.name, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Cierre del día' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = CI.url; a.download = CI.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Imagen descargada');
+  }
+  async function copyCierre() {
+    const text = cierreText(), fb = $('#copy-fallback');
+    try { await navigator.clipboard.writeText(text); toast('Texto copiado: pegalo en WhatsApp'); }
+    catch (e) { if (fb) { fb.hidden = false; fb.value = text; fb.focus(); fb.select(); } toast('Seleccioná el texto y copialo'); }
+  }
+  function openCierre() {
+    if (location.hash !== '#cierre') { location.hash = 'cierre'; return; }
+    enterCierre();
+  }
+  function enterCierre() {
+    S.view = 'cierre'; S.cierreEdit = false; S.cierreErr = ''; S.cierreEstado = null;
+    S.enter = true; prevVals.clear(); prevW.clear(); firstPaint = true;
+    closeDrawer(); render(); window.scrollTo(0, 0);
+  }
+  function leaveCierre() {
+    if (location.hash === '#cierre') history.pushState(null, '', location.pathname + location.search);
+    S.view = 'main'; S.enter = true; S.draw = true; prevVals.clear(); prevW.clear(); firstPaint = true;
+    render(); window.scrollTo(0, 0);
+  }
+  addEventListener('hashchange', () => {
+    const want = location.hash === '#cierre' ? 'cierre' : 'main';
+    if (want === S.view) return;
+    if (want === 'cierre') enterCierre(); else leaveCierre();
+  });
 
   /* ---------- animaciones de valores ---------- */
   const prevVals = new Map(), prevW = new Map();
@@ -691,6 +1016,7 @@
       S.enterNow = enter;
       main.classList.toggle('enter', enter);
       main.innerHTML = mainHTML();
+      if (S.view === 'cierre') scheduleCierreImage();
       drawChart(S.draw && S.loaded);
       Object.entries(dirty).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dataset.dirty = '1'; } });
       if (focus) { const el = document.getElementById(focus.id); if (el && !el.disabled) { el.focus({ preventScroll: true }); try { el.setSelectionRange(focus.a, focus.b); } catch (e) { } } }
@@ -711,6 +1037,8 @@
     badge.textContent = n; badge.hidden = !S.loaded || n < 2;
     $('#btn-menu').disabled = !S.loaded;
     $('#btn-new').disabled = !S.loaded;
+    $('#btn-cierre').disabled = !S.loaded;
+    $('#btn-cierre').setAttribute('aria-pressed', String(S.view === 'cierre'));
     if (!$('#drawer').hidden) renderDrawer();
     updateSaving();
   }
@@ -767,7 +1095,7 @@
     const fm = $('#f-m'), fu = $('#f-u');
     const m = fm ? parseNum(fm.value) : 0, u = fu ? parseNum(fu.value) : 0;
     if (fm && m == null) { S.formErr = 'Escribí el monto vendido acumulado.'; render(); const e = $('#f-m'); if (e) e.focus(); return; }
-    if (fu && u == null) { S.formErr = `Escribí los ${M.unidad.toLowerCase()} vendidos acumulados.`; render(); const e = $('#f-u'); if (e) e.focus(); return; }
+    if (fu && u == null) { S.formErr = `Escribí el acumulado de ${M.unidad.toLowerCase()}.`; render(); const e = $('#f-u'); if (e) e.focus(); return; }
     const cerrado = $('#f-cerrado').checked;
     [fm, fu].forEach(el => { if (el) el.dataset.dirty = ''; });
     const wasDone = M && done(M) && M.last;
@@ -838,9 +1166,13 @@
     const el = e.target;
     if (el.id === 'f-fecha') { S.formFecha = isISO(el.value) ? el.value : null; S.formEstado = null; S.formErr = ''; render(); }
     else if (el.name === 'f-estado') S.formEstado = el.value;
+    else if (el.id === 'ci-fecha') { S.cierreFecha = isISO(el.value) ? el.value : null; S.cierreErr = ''; S.cierreEstado = null; render(); }
+    else if (el.name === 'ci-estado') S.cierreEstado = el.value;
+    else if (el.dataset && el.dataset.ckey != null) { CP.sel[el.dataset.ckey] = el.checked; saveCierre(); render(); }
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
+    if (e.key === 'Enter' && /^ci-[mu]-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;
@@ -849,6 +1181,13 @@
     if (t.dataset.del) { S.confirmDel = t.dataset.del; render(); return; }
     if (t.dataset.delNo) { S.confirmDel = null; render(); return; }
     if (t.dataset.delYes) { const id = t.dataset.delYes; S.confirmDel = null; S.draw = true; S.bump = true; put('avances', id, null); toast('Avance borrado'); return; }
+    if (t.dataset.go === 'main') { leaveCierre(); return; }
+    if (t.dataset.csel) { const all = t.dataset.csel === 'all'; cierreRows(cierreFecha()).forEach(r => { if (!r.locked) CP.sel[r.key] = all; }); saveCierre(); render(); return; }
+    if (t.id === 'ci-share') { shareCierre(); return; }
+    if (t.id === 'ci-copy') { copyCierre(); return; }
+    if (t.id === 'ci-edit') { S.cierreEdit = !S.cierreEdit; S.cierreErr = ''; S.cierreEstado = null; render(); if (S.cierreEdit) { const f = main.querySelector('.ci-table input:not([disabled])'); if (f) f.focus(); } return; }
+    if (t.id === 'ci-cancel') { S.cierreEdit = false; S.cierreErr = ''; main.querySelectorAll('[id^="ci-"]').forEach(el => { el.dataset.dirty = ''; }); render(); return; }
+    if (t.id === 'ci-save') { saveCierreVentas(); return; }
     if (t.id === 'f-save') saveAvance();
     else if (t.id === 'act-copy') copySummary();
     else if (t.id === 'act-csv') downloadCSV();
@@ -884,6 +1223,7 @@
     b.appendChild(s); setTimeout(() => s.remove(), 700);
   });
   function selectMeta(id) {
+    if (S.view === 'cierre') { closeDrawer(); S.sel = id; savePrefs(); leaveCierre(); return; }
     if (id !== S.sel) {
       S.sel = id; S.formFecha = null; S.formEstado = null; S.formErr = ''; S.confirmDel = null; S.unlockErr = '';
       S.enter = true; S.draw = true; prevVals.clear(); prevW.clear(); firstPaint = true; savePrefs();
@@ -893,6 +1233,7 @@
     window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
   }
   $('#btn-new').addEventListener('click', () => openEditor(null));
+  $('#btn-cierre').addEventListener('click', () => { if (S.view === 'cierre') leaveCierre(); else openCierre(); });
 
   /* ---------- menú de objetivos (tres rayas) ---------- */
   const drawer = $('#drawer'), drList = $('#dr-list'), drQ = $('#dr-q');
@@ -961,6 +1302,7 @@
   drList.addEventListener('click', e => { const b = e.target.closest('.dr-item'); if (b) selectMeta(b.dataset.id); });
   drQ.addEventListener('input', renderDrawer);
   $('#dr-new').addEventListener('click', () => { closeDrawer(); openEditor(null); });
+  $('#dr-cierre').addEventListener('click', () => { closeDrawer(); openCierre(); });
   drawer.addEventListener('keydown', e => {
     if (e.key === 'Escape') { e.stopPropagation(); closeDrawer(); return; }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1246,6 +1588,7 @@
     restorePrefs();
     loadPending();
     loadLlaves();
+    if (location.hash === '#cierre') S.view = 'cierre';
     buildBackground();
     if (finePointer) trackPointer();
     // Hasta que este dispositivo no hable una vez con la base nueva, lo que tiene guardado se considera
