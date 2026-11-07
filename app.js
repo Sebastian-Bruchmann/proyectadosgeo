@@ -258,7 +258,8 @@
     const ref = last
       ? { fecha: last.fecha, m: +last.monto || 0, u: +last.unidades || 0, cerrado: !!last.cerrado }
       : { fecha: clampD(t, meta.desde, meta.hasta), m: 0, u: 0, cerrado: t > meta.hasta };
-    if (cierra && last && last.fecha === asOf) ref.cerrado = true;
+    // Un día que ya pasó no puede seguir vendiendo: cuenta como cerrado. En el cierre, el día elegido también.
+    if (last && (last.fecha < t || cierra)) ref.cerrado = true;
     const closed = s => s < ref.fecha || (s === ref.fecha && ref.cerrado);
     const habTrans = transAt(ref.fecha, ref.cerrado);
     // En el cierre, lo que queda se cuenta desde el día siguiente a la fecha elegida (aunque el local no tenga dato de ese día)
@@ -696,7 +697,9 @@
     const sum = f => Ms.reduce((x, M) => x + (f(M) || 0), 0);
     const objM = sum(M => M.objM), objU = sum(M => M.objU), vendM = sum(M => M.vendM), vendU = sum(M => M.vendU);
     const w = M => objM ? M.objM : M.objU, wt = Ms.reduce((x, M) => x + w(M), 0) || 1;
-    const habRest = Math.max(...Ms.map(M => M.habRest)), H = Math.max(...Ms.map(M => M.H));
+    // Días hábiles: el valor que comparten la mayoría de los locales (alguno puede trabajar también domingos)
+    const moda = vals => { const c = new Map(); vals.forEach(v => c.set(v, (c.get(v) || 0) + 1)); return [...c].sort((p, q) => q[1] - p[1] || q[0] - p[0])[0][0]; };
+    const habRest = moda(Ms.map(M => M.habRest)), H = moda(Ms.map(M => M.H));
     const mismoRest = Ms.every(M => M.habRest === habRest);
     const conHoy = R.filter(r => r.hoy);
     const fo = Ms.map(M => M.firstOpen).filter(Boolean).sort();
