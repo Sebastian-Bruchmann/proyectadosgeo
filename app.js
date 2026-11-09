@@ -689,6 +689,18 @@
   const proyP = M => M.objM ? (M.proyM != null ? M.proyM / M.objM : null) : (M.objU && M.proyU != null ? M.proyU / M.objU : null);
   const sortCierre = list => list.slice().sort((a, b) => (proyP(b.M) ?? mainP(b.M) ?? -1) - (proyP(a.M) ?? mainP(a.M) ?? -1));
   const colP = p => p == null ? '' : p >= 1 ? 'ok' : p >= 0.9 ? 'warn' : 'bad';
+  /* Vendido del día: el efectivo entra entero; a tarjeta / QR / otros se le descuenta la comisión */
+  const COMISION = 0.0322;
+  const COM_TXT = `${(COMISION * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })} %`;
+  const netoDia = (efe, otr) => Math.round((+efe || 0) + (+otr || 0) * (1 - COMISION));
+  function updDiaTot(id) {
+    const e = document.getElementById('ci-de-' + id), q = document.getElementById('ci-dq-' + id), o = document.getElementById('ci-dt-' + id);
+    if (!o) return;
+    const typed = x => x ? parseNum(x.value) : null;
+    const val = x => { if (!x) return null; const t = typed(x); return t != null ? t : (x.dataset.base !== '' ? +x.dataset.base : null); };
+    const ev = val(e), qv = val(q);
+    o.textContent = typed(e) != null || typed(q) != null || ev != null || qv != null ? money(netoDia(ev, qv)) : (o.dataset.base !== '' ? money(+o.dataset.base) : '—');
+  }
   /* Proyección separada: Acc (pesos) y Op (operaciones / la unidad que use el objetivo) */
   const opLbl = M => /^oper/i.test(M.unidad || '') ? 'Op' : (M.unidad || 'Unidades');
   const proySep = M => {
@@ -870,15 +882,22 @@
         const cM = !anyM ? '' : !M.objM ? '<td>—</td>' : `<td data-l="Monto acumulado"><input class="qin" id="ci-m-${id}" inputmode="decimal" autocomplete="off" placeholder="${base ? nf0.format(base.monto) : '0'}" aria-label="Monto acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
         const cU = !anyU ? '' : !M.objU ? '<td>—</td>' : `<td data-l="${U} (acumulado)"><input class="qin qty" id="ci-u-${id}" inputmode="numeric" autocomplete="off" placeholder="${base ? nf0.format(base.unidades) : '0'}" aria-label="${U} acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
         const ph = v => v != null ? nf0.format(v) : '—';
-        const dM = !anyM ? '' : !M.objM ? '<td>—</td>' : `<td data-l="${vendDia}" class="dia"><input class="qin" id="ci-dm-${id}" inputmode="decimal" autocomplete="off" placeholder="${ph(r.hoy ? r.hoy.m : null)}" aria-label="Vendido ${diaTxt} en ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
+        const sv = k => there && there[k] != null ? +there[k] : null;
+        const efeS = sv('diaEfectivo'), otrS = sv('diaOtros'), totS = sv('diaMonto');
+        const dis = can ? '' : ' disabled';
+        const dM = !anyM ? '' : !M.objM ? '<td>—</td><td>—</td><td>—</td>'
+          : `<td data-l="Efectivo ${diaDe}" class="dia"><input class="qin" id="ci-de-${id}" data-base="${efeS ?? ''}" inputmode="decimal" autocomplete="off" placeholder="${ph(efeS)}" aria-label="Efectivo ${diaDe} en ${esc(r.name)}"${dis}></td>`
+          + `<td data-l="Tarjeta / QR (−${COM_TXT})" class="dia"><input class="qin" id="ci-dq-${id}" data-base="${otrS ?? ''}" inputmode="decimal" autocomplete="off" placeholder="${ph(otrS)}" aria-label="Tarjeta, QR y otros ${diaDe} en ${esc(r.name)} (se descuenta ${COM_TXT})"${dis}></td>`
+          + `<td data-l="${vendDia}" class="dia dtot"><output id="ci-dt-${id}" data-base="${totS ?? ''}" aria-live="polite">${totS != null ? money(totS) : '—'}</output></td>`;
         const dU = !anyU ? '' : !M.objU ? '<td>—</td>' : `<td data-l="${U} ${diaDe}" class="dia"><input class="qin qty" id="ci-du-${id}" inputmode="numeric" autocomplete="off" placeholder="${ph(r.hoy ? r.hoy.u : null)}" aria-label="${U} ${diaDe} en ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
-        return `<tr style="--r:${Math.min(k, 24)}">${name}${cM}${cU}${dM}${dU}<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td></tr>`;
+        const nameE = name.replace('</th>', `<span class="c2">${base ? `último dato ${fDM(base.fecha)}` : 'sin datos'}</span></th>`);
+        return `<tr style="--r:${Math.min(k, 24)}">${nameE}${cM}${cU}${dM}${dU}</tr>`;
       }
       const C = cierreCells(M, r.hoy, r.stale, M.last);
       return `<tr style="--r:${Math.min(k, 24)}">${name}<td data-l="${hoyCol}">${C.H}</td><td data-l="Acumulado">${C.A}</td><td data-l="${proyCol}">${C.P}</td><td data-l="Para el 100 %, por día">${C.N}</td><td class="st">${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</td></tr>`;
     }).join('');
     const head = edit
-      ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}${anyM ? `<th scope="col" class="dia">${vendDia}</th>` : ''}${anyU ? `<th scope="col" class="dia">${U} ${diaDe}</th>` : ''}<th scope="col">Último dato</th></tr>`
+      ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}${anyM ? `<th scope="col" class="dia">Efectivo</th><th scope="col" class="dia">Tarjeta / QR <small>−${COM_TXT}</small></th><th scope="col" class="dia">${vendDia}</th>` : ''}${anyU ? `<th scope="col" class="dia">${U} ${diaDe}</th>` : ''}</tr>`
       : `<tr><th class="l" scope="col">Local</th><th scope="col">${hoyCol}</th><th scope="col">Acumulado</th><th scope="col">${proyCol}</th><th scope="col">Para el 100 %, por día</th><th scope="col">Estado</th></tr>`;
     let foot = '';
     if (!edit) {
@@ -893,7 +912,7 @@
         <td class="st">${stT.t ? `<span class="chip ${stT.k}">${stT.t}</span>` : ''}</td></tr></tfoot>`;
     }
     return `<section class="glass panel ${edit ? 'entry ' : ''}rise" style="--i:${i}" aria-labelledby="ci-t-h">
-      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Cargar ventas del día' : 'Por local'}</h2><p>${edit ? `Escribí el <b>acumulado del mes</b> de cada local: con eso se calcula la proyección. "${vendDia}" y "${U} ${diaDe}" son lo vendido ese día y salen en la imagen y el texto. El número gris es lo que hay ahora: si dejás un campo vacío, queda como está.` : `Ordenados por proyección (sale del acumulado). "${hoyCol}" es lo vendido en el día.`}</p></div></div>
+      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Cargar ventas del día' : 'Por local'}</h2><p>${edit ? `Escribí el <b>acumulado del mes</b> de cada local: con eso se calcula la proyección. Lo del día va aparte y sale en la imagen y el texto: el efectivo cuenta entero y a tarjeta / QR / otros se le descuenta el ${COM_TXT}; "${vendDia}" es la suma con el descuento hecho. El número gris es lo que hay ahora: si dejás un campo vacío, queda como está.` : `Ordenados por proyección (sale del acumulado). "${hoyCol}" es lo vendido en el día.`}</p></div></div>
       ${edit ? `<fieldset class="estado"><legend>¿${fecha === t ? 'Hoy' : cap(fDow(fecha))} ya cerró?</legend>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label></fieldset>` : ''}
@@ -910,10 +929,10 @@
     const faltan = [], recs = [];
     rows.forEach(r => {
       const el = k => document.getElementById(k + r.m.id);
-      const im = el('ci-m-'), iu = el('ci-u-'), idm = el('ci-dm-'), idu = el('ci-du-');
+      const im = el('ci-m-'), iu = el('ci-u-'), ide = el('ci-de-'), idq = el('ci-dq-'), idu = el('ci-du-');
       const v = x => x ? parseNum(x.value) : null;
-      const m = v(im), u = v(iu), dm = v(idm), du = v(idu);
-      if (m == null && u == null && dm == null && du == null) return;
+      const m = v(im), u = v(iu), de = v(ide), dq = v(idq), du = v(idu);
+      if (m == null && u == null && de == null && dq == null && du == null) return;
       const id = r.m.id + '__' + fecha, there = S.avances.get(id), base = there || r.M.last;
       // Sin acumulado de este día no se puede proyectar: se pide antes de guardar
       if (!there && m == null && u == null) { faltan.push(r.name); return; }
@@ -921,8 +940,14 @@
         monto: Math.max(0, Math.round(m != null ? m : base ? +base.monto || 0 : 0)),
         unidades: Math.max(0, Math.round(u != null ? u : base ? +base.unidades || 0 : 0)) };
       const keep = (val, k) => { if (val != null) rec[k] = Math.max(0, Math.round(val)); else if (there && there[k] != null) rec[k] = there[k]; };
-      keep(dm, 'diaMonto'); keep(du, 'diaUnidades');
-      recs.push([id, rec, [im, iu, idm, idu]]);
+      if (de != null || dq != null) {
+        const was = k => there && there[k] != null ? +there[k] : 0;
+        rec.diaEfectivo = Math.max(0, Math.round(de != null ? de : was('diaEfectivo')));
+        rec.diaOtros = Math.max(0, Math.round(dq != null ? dq : was('diaOtros')));
+        rec.diaMonto = netoDia(rec.diaEfectivo, rec.diaOtros);
+      } else ['diaEfectivo', 'diaOtros', 'diaMonto'].forEach(k => { if (there && there[k] != null) rec[k] = there[k]; });
+      keep(du, 'diaUnidades');
+      recs.push([id, rec, [im, iu, ide, idq, idu]]);
     });
     if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
     recs.forEach(([id, rec, els]) => { els.forEach(x => { if (x) x.dataset.dirty = ''; }); put('avances', id, rec); n++; });
@@ -1213,6 +1238,7 @@
       if (S.view === 'cierre') scheduleCierreImage();
       drawChart(S.draw && S.loaded);
       Object.entries(dirty).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dataset.dirty = '1'; } });
+      main.querySelectorAll('output[id^="ci-dt-"]').forEach(o => updDiaTot(o.id.slice(6)));
       if (focus) { const el = document.getElementById(focus.id); if (el && !el.disabled) { el.focus({ preventScroll: true }); try { el.setSelectionRange(focus.a, focus.b); } catch (e) { } } }
       if (S.loaded) {
         animateNumbers();
@@ -1298,7 +1324,7 @@
     S.bump = true; S.draw = true;
     const prevA = S.avances.get(id);
     put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString(),
-      ...(prevA && prevA.diaMonto != null ? { diaMonto: prevA.diaMonto } : {}), ...(prevA && prevA.diaUnidades != null ? { diaUnidades: prevA.diaUnidades } : {}) });
+      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros'].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
     if (lastModel && done(lastModel) && !wasDone) { confetti(); toast('¡Objetivo cumplido!'); }
     else toast('Listo, recalculado');
   }
@@ -1357,6 +1383,7 @@
     if (!el.matches('input')) return;
     if (el.type !== 'radio' && el.type !== 'date') el.dataset.dirty = '1';
     if (el.matches('[inputmode="decimal"], [inputmode="numeric"]')) liveFormat(el);
+    if (/^ci-d[eq]-/.test(el.id)) updDiaTot(el.id.slice(6));
   });
   main.addEventListener('change', e => {
     const el = e.target;
@@ -1368,7 +1395,7 @@
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
-    if (e.key === 'Enter' && /^ci-(m|u|dm|du)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;

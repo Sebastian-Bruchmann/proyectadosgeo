@@ -63,6 +63,9 @@ function cleanAvance(b) {
   // Vendido en el día (opcional, solo para mostrar en el cierre; la proyección usa el acumulado)
   if (typeof b.diaMonto === 'number' && isFinite(b.diaMonto)) out.diaMonto = num(b.diaMonto);
   if (typeof b.diaUnidades === 'number' && isFinite(b.diaUnidades)) out.diaUnidades = num(b.diaUnidades);
+  // Desglose del día: efectivo y tarjeta/QR/otros (sin descontar; diaMonto ya trae el neto)
+  if (typeof b.diaEfectivo === 'number' && isFinite(b.diaEfectivo)) out.diaEfectivo = num(b.diaEfectivo);
+  if (typeof b.diaOtros === 'number' && isFinite(b.diaOtros)) out.diaOtros = num(b.diaOtros);
   return out;
 }
 

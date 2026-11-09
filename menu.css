@@ -233,3 +233,16 @@
   .ci-table.edit input.qin { width: 112px; }
   .ci-table.edit input.qin.qty { width: 70px; }
 }
+
+/* Vendido del día: efectivo + tarjeta/QR (con descuento) = total */
+.ci-table th.dia small { display: block; white-space: nowrap; font-weight: 700; opacity: 0.8; letter-spacing: 0; }
+.ci-table td.dtot output { display: inline-block; min-width: 104px; text-align: right; font-weight: 800; color: #fdba74; font-variant-numeric: tabular-nums; }
+@media (min-width: 901px) {
+  .ci-table.edit input.qin { width: 128px; }
+  .ci-table.edit input.qin.qty { width: 78px; }
+}
+@media (max-width: 560px) {
+  .ci-table td.dtot output { display: flex; align-items: center; min-width: 0; height: 42px; text-align: left; font-size: 18px; }
+}
+.ci-table.edit thead th { white-space: normal; vertical-align: bottom; line-height: 1.35; }
+.ci-table.edit th.l .c2 { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
