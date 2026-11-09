@@ -1072,8 +1072,10 @@
     const big = (s, Y, size) => { txt(s, ix, Y, F(900, size || 70), '#ffffff'); x.font = F(900, size || 70); return x.measureText(s).width; };
     const sep = Y => { x.fillStyle = 'rgba(255,237,213,0.22)'; x.fillRect(ix, Y, iw, 2); };
     const missing = T.sinHoy.length;
+    // Utilidad del día: solo el número, debajo de las operaciones (si algún local la cargó)
+    const UD = utilData(fecha, sel), utN = UD.conDia ? money(UD.diaT) : null;
     const blocks = [];
-    blocks.push({ h: 128 + (missing || T.hoyGap ? 40 : 0), draw: Y => {
+    blocks.push({ h: 128 + (missing || T.hoyGap || utN ? 40 : 0), draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
       if (!T.hoyN) { big('Sin datos', Y + 100, 60); }
       else {
@@ -1081,7 +1083,9 @@
         const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
         if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
       }
-      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + 142, F(600, 23), '#fcd34d'); }
+      let utW = 0;
+      if (utN) { x.font = F(800, 32); utW = x.measureText(utN).width + 28; txt(utN, ix + iw, Y + 142, F(800, 32), '#ffffff', 'right'); }
+      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw - utW), ix, Y + 142, F(600, 23), '#fcd34d'); }
     } });
     const pc = T.proyP;
     blocks.push({ h: pc == null ? 128 : 150 + (T.objM && T.objU ? 44 : 0), draw: Y => {
@@ -1302,7 +1306,7 @@
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);
