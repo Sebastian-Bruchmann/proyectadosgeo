@@ -1075,7 +1075,9 @@
     // Utilidad del día: solo el número, debajo de las operaciones (si algún local la cargó)
     const UD = utilData(fecha, sel), utN = UD.conDia ? money(UD.diaT) : null;
     const blocks = [];
-    blocks.push({ h: 128 + (missing || T.hoyGap || utN ? 40 : 0), draw: Y => {
+    // 75 % de lo vendido en el día (Acc), solo el número, debajo del monto
+    const p75 = T.hoyN && T.objM ? money(Math.round(T.hoyM * 0.75)) : null;
+    blocks.push({ h: 128 + (p75 || utN ? 40 : 0) + (missing || T.hoyGap ? 40 : 0), draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
       if (!T.hoyN) { big('Sin datos', Y + 100, 60); }
       else {
@@ -1083,9 +1085,10 @@
         const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
         if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
       }
-      let utW = 0;
-      if (utN) { x.font = F(800, 32); utW = x.measureText(utN).width + 28; txt(utN, ix + iw, Y + 142, F(800, 32), '#ffffff', 'right'); }
-      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw - utW), ix, Y + 142, F(600, 23), '#fcd34d'); }
+      if (p75) txt(p75, ix, Y + 142, F(800, 32), '#ffffff');
+      if (utN) txt(utN, ix + iw, Y + 142, F(800, 32), '#ffffff', 'right');
+      const yN = Y + (p75 || utN ? 182 : 142);
+      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, yN, F(600, 23), '#fcd34d'); }
     } });
     const pc = T.proyP;
     blocks.push({ h: pc == null ? 128 : 150 + (T.objM && T.objU ? 44 : 0), draw: Y => {
