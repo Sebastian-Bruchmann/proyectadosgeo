@@ -1129,7 +1129,7 @@
     } });
     // 2) Vendido en el día (grande)
     const BIG = 80;
-    const hoyLast = totU ? 222 : (p75 || utN) ? 166 : 114;
+    const hoyLast = (p75 || utN) ? 168 : 114;
     blocks.push({ h: hoyLast + (missing || T.hoyGap ? 44 : 0) + 18, draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
       const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
@@ -1139,9 +1139,10 @@
         if (T.objM) big(money(T.hoyM), Y + 114, BIG, ix, iw - usW);
         if (T.objM && us) txt(us, ix + iw, Y + 112, F(800, 46), '#ffffff', 'right'); else if (us) big(us, Y + 114, BIG, ix, iw);
       }
-      if (p75) txt(p75, ix, Y + 166, F(800, 40), '#ffffff');
-      if (utN) txt(utN, ix + iw, Y + 166, F(800, 40), '#ffffff', 'right');
-      if (totU) txt(totU, ix + iw, Y + 222, F(900, 46), '#fdba74', 'right');
+      // misma línea: 75 % a la izquierda, total de utilidades (dorado) en el medio, utilidad a la derecha
+      if (p75) txt(p75, ix, Y + 168, F(800, 40), '#ffffff');
+      if (utN) txt(utN, ix + iw, Y + 168, F(800, 40), '#ffffff', 'right');
+      if (totU) txt(totU, ix + iw / 2, Y + 168, F(900, 46), '#fdba74', 'center');
       if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + hoyLast + 44, F(600, 23), '#fcd34d'); }
     } });
     // 3) Proyección (grande): Acc y Op con el mismo tamaño
@@ -1212,8 +1213,8 @@
         if (M.objM) big(money(r.hoy.m), cy + 76, 52, cx, cw - usW);
         if (M.objM && us) txt(us, cx + cw, cy + 74, F(800, 32), '#ffffff', 'right'); else if (us) big(us, cy + 76, 52, cx, cw);
         let last = cy + 76;
-        if (p75L != null || utL) { last = cy + 116; if (p75L != null) txt(money(p75L), cx, last, F(800, 28), '#ffffff'); if (utL) txt(utL, cx + cw, last, F(800, 28), '#ffffff', 'right'); }
-        if (totL) { last = cy + 156; txt(totL, cx + cw, last, F(900, 32), '#fdba74', 'right'); }
+        if (p75L != null || utL) { last = cy + 118; if (p75L != null) txt(money(p75L), cx, last, F(800, 28), '#ffffff'); if (utL) txt(utL, cx + cw, last, F(800, 28), '#ffffff', 'right'); }
+        if (totL) txt(totL, cx + cw / 2, cy + 118, F(900, 32), '#fdba74', 'center');
         cy = last + 16;
       }
       lsep(cy); cy += 20;
