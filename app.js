@@ -664,21 +664,19 @@
   const isSel = key => Object.prototype.hasOwnProperty.call(CP.sel, key) ? !!CP.sel[key] : !/san martin|dean funes/.test(key);
   const mainP = M => M.objM ? M.pM : M.pU;
   const cierreFecha = () => (S.cierreFecha && isISO(S.cierreFecha)) ? S.cierreFecha : todayISO();
-  /* Lo vendido en el día elegido: dato de ese día menos el dato anterior. */
+  /* Lo vendido en el día elegido: lo que se cargó como "vendido hoy"; si no se cargó, la resta con el dato
+     anterior, pero solo si el día hábil anterior está cargado (si no, mezclaría varios días). */
   function hoyOf(M, fecha) {
     const cur = M.av.find(a => a.fecha === fecha);
     if (!cur) return null;
     const prevs = M.av.filter(a => a.fecha < fecha), prev = prevs[prevs.length - 1] || null;
     const isW = s => M.dias.includes(dow(s)) && !M.cerr.has(s);
     const antes = M.habHasta.get(fecha) - (isW(fecha) ? 1 : 0);
-    const hasta = prev ? M.habHasta.get(prev.fecha) : 0;
-    let desde = null;
-    if (antes - hasta > 0) { // hay días hábiles sin dato en el medio: lo de "hoy" los incluye
-      let s = prev ? addDays(prev.fecha, 1) : M.meta.desde, g = 0;
-      while (s < fecha && !isW(s) && g++ < 60) s = addDays(s, 1);
-      desde = s;
-    }
-    return { m: (+cur.monto || 0) - (prev ? +prev.monto || 0 : 0), u: (+cur.unidades || 0) - (prev ? +prev.unidades || 0 : 0), desde };
+    const seguido = antes - (prev ? M.habHasta.get(prev.fecha) : 0) <= 0;
+    const dm = cur.diaMonto != null ? +cur.diaMonto : null, du = cur.diaUnidades != null ? +cur.diaUnidades : null;
+    if (dm != null || du != null) return { m: dm != null ? dm : 0, u: du != null ? du : 0, manual: true, desde: null };
+    if (!seguido) return null;
+    return { m: (+cur.monto || 0) - (prev ? +prev.monto || 0 : 0), u: (+cur.unidades || 0) - (prev ? +prev.unidades || 0 : 0), manual: false, desde: null };
   }
   function cierreRows(fecha) {
     return sortedMetas().filter(m => m.desde <= fecha && fecha <= m.hasta).map(m => {
@@ -744,7 +742,8 @@
     const D = parse(fecha);
     const titulo = `${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`;
     const sel = rows.filter(r => r.sel && r.M);
-    const staleN = sel.filter(r => !r.hoy).length;
+    const sinAcum = sel.filter(r => r.stale).map(r => r.name), sinDia = sel.filter(r => !r.stale && !r.hoy).map(r => r.name);
+    const dTxt = fecha === t ? 'de hoy' : `del ${fDow(fecha)}`, lista = a => a.length > 3 ? `${a.length} locales` : a.join(', ');
     let h = `<section class="head rise" style="--i:0">
       <div><p class="eyebrow">Cierre del día${fecha === t ? ' · hoy' : ''}</p>
         <h2>${titulo}</h2>
@@ -767,7 +766,7 @@
         <button type="button" class="btn lg" id="ci-copy"${T ? '' : ' disabled'}>${ICO_COPY}Copiar texto</button>
         <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Cargar ventas del día'}</button>
       </div>
-      ${staleN && !S.cierreEdit ? `<p class="ci-warn">${staleN === 1 ? '1 local no tiene' : `${staleN} locales no tienen`} dato del ${fecha === t ? 'día de hoy' : fDow(fecha)}, así que no suma en "${hoyLbl(fecha)}" y se proyecta con su último dato. Tocá "Cargar ventas del día" para ponerlo al día.</p>` : ''}
+      ${(sinAcum.length || sinDia.length) && !S.cierreEdit ? `<p class="ci-warn">${sinAcum.length ? `Sin acumulado ${dTxt}: ${esc(lista(sinAcum))} (se proyecta con su último dato). ` : ''}${sinDia.length ? `Sin lo vendido ${dTxt}: ${esc(lista(sinDia))} (no suma en "${hoyLbl(fecha)}"). ` : ''}Completalo en "Cargar ventas del día".</p>` : ''}
     </section>`;
     if (!T) return h + `<section class="glass panel rise" style="--i:2"><p class="muted">Elegí al menos un local para armar el cierre.</p></section>`;
     h += cierreKpisHTML(T, fecha, 2);
@@ -852,7 +851,7 @@
     const anyM = sel.some(r => r.M.objM), anyU = sel.some(r => r.M.objU);
     const edit = S.cierreEdit;
     const cerrado = S.cierreEstado != null ? S.cierreEstado === 'cerrado' : true;
-    const diaTxt = fecha === t ? 'hoy' : `el ${fDow(fecha)}`;
+    const diaTxt = fecha === t ? 'hoy' : `el ${fDow(fecha)}`, diaDe = fecha === t ? 'de hoy' : 'del día', vendDia = fecha === t ? 'Vendido hoy' : 'Vendido del día';
     const hoyCol = fecha === t ? 'Hoy' : cap(fDow(fecha)), proyCol = `Proyección ${T.mes ? 'fin de mes' : 'al cierre'}`;
     const list = edit ? sel : sortCierre(sel);
     const body = list.map((r, k) => {
@@ -862,13 +861,16 @@
       if (edit) {
         const cM = !anyM ? '' : !M.objM ? '<td>—</td>' : `<td data-l="Monto acumulado"><input class="qin" id="ci-m-${id}" inputmode="decimal" autocomplete="off" placeholder="${base ? nf0.format(base.monto) : '0'}" aria-label="Monto acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
         const cU = !anyU ? '' : !M.objU ? '<td>—</td>' : `<td data-l="${U} (acumulado)"><input class="qin qty" id="ci-u-${id}" inputmode="numeric" autocomplete="off" placeholder="${base ? nf0.format(base.unidades) : '0'}" aria-label="${U} acumulado de ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
-        return `<tr style="--r:${Math.min(k, 24)}">${name}${cM}${cU}<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td></tr>`;
+        const ph = v => v != null ? nf0.format(v) : '—';
+        const dM = !anyM ? '' : !M.objM ? '<td>—</td>' : `<td data-l="${vendDia}" class="dia"><input class="qin" id="ci-dm-${id}" inputmode="decimal" autocomplete="off" placeholder="${ph(r.hoy ? r.hoy.m : null)}" aria-label="Vendido ${diaTxt} en ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
+        const dU = !anyU ? '' : !M.objU ? '<td>—</td>' : `<td data-l="${U} ${diaDe}" class="dia"><input class="qin qty" id="ci-du-${id}" inputmode="numeric" autocomplete="off" placeholder="${ph(r.hoy ? r.hoy.u : null)}" aria-label="${U} ${diaDe} en ${esc(r.name)}"${can ? '' : ' disabled'}></td>`;
+        return `<tr style="--r:${Math.min(k, 24)}">${name}${cM}${cU}${dM}${dU}<td class="muted hide-sm">${base ? fDM(base.fecha) : '—'}</td></tr>`;
       }
       const C = cierreCells(M, r.hoy, r.stale, M.last);
       return `<tr style="--r:${Math.min(k, 24)}">${name}<td data-l="${hoyCol}">${C.H}</td><td data-l="Acumulado">${C.A}</td><td data-l="${proyCol}">${C.P}</td><td data-l="Para el 100 %, por día">${C.N}</td><td class="st">${st.t ? `<span class="chip ${st.k}">${st.t}</span>` : ''}</td></tr>`;
     }).join('');
     const head = edit
-      ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}<th scope="col">Último dato</th></tr>`
+      ? `<tr><th class="l" scope="col">Local</th>${anyM ? '<th scope="col">Monto acumulado</th>' : ''}${anyU ? `<th scope="col">${U} (acumulado)</th>` : ''}${anyM ? `<th scope="col" class="dia">${vendDia}</th>` : ''}${anyU ? `<th scope="col" class="dia">${U} ${diaDe}</th>` : ''}<th scope="col">Último dato</th></tr>`
       : `<tr><th class="l" scope="col">Local</th><th scope="col">${hoyCol}</th><th scope="col">Acumulado</th><th scope="col">${proyCol}</th><th scope="col">Para el 100 %, por día</th><th scope="col">Estado</th></tr>`;
     let foot = '';
     if (!edit) {
@@ -883,7 +885,7 @@
         <td class="st">${stT.t ? `<span class="chip ${stT.k}">${stT.t}</span>` : ''}</td></tr></tfoot>`;
     }
     return `<section class="glass panel ${edit ? 'entry ' : ''}rise" style="--i:${i}" aria-labelledby="ci-t-h">
-      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Cargar ventas del día' : 'Por local'}</h2><p>${edit ? 'Escribí el vendido acumulado del mes de cada local (no solo lo del día: la web resta el dato anterior). El número gris es el último dato: si dejás un campo vacío, queda como está.' : `Ordenados por proyección. "${hoyCol}" es el acumulado menos el dato anterior.`}</p></div></div>
+      <div class="panel-head"><div><h2 id="ci-t-h">${edit ? 'Cargar ventas del día' : 'Por local'}</h2><p>${edit ? `Escribí el <b>acumulado del mes</b> de cada local: con eso se calcula la proyección. "${vendDia}" y "${U} ${diaDe}" son lo vendido ese día y salen en la imagen y el texto. El número gris es lo que hay ahora: si dejás un campo vacío, queda como está.` : `Ordenados por proyección (sale del acumulado). "${hoyCol}" es lo vendido en el día.`}</p></div></div>
       ${edit ? `<fieldset class="estado"><legend>¿${fecha === t ? 'Hoy' : cap(fDow(fecha))} ya cerró?</legend>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label></fieldset>` : ''}
@@ -897,17 +899,25 @@
     const cerrado = !!($('#ci-cerrado') && $('#ci-cerrado').checked);
     const now = new Date().toISOString();
     let n = 0;
+    const faltan = [], recs = [];
     rows.forEach(r => {
-      const im = document.getElementById('ci-m-' + r.m.id), iu = document.getElementById('ci-u-' + r.m.id);
-      const m = im ? parseNum(im.value) : null, u = iu ? parseNum(iu.value) : null;
-      if (m == null && u == null) return;
-      const id = r.m.id + '__' + fecha, base = S.avances.get(id) || r.M.last;
-      [im, iu].forEach(el => { if (el) el.dataset.dirty = ''; });
-      put('avances', id, { metaId: r.m.id, fecha, cerrado, actualizado: now,
+      const el = k => document.getElementById(k + r.m.id);
+      const im = el('ci-m-'), iu = el('ci-u-'), idm = el('ci-dm-'), idu = el('ci-du-');
+      const v = x => x ? parseNum(x.value) : null;
+      const m = v(im), u = v(iu), dm = v(idm), du = v(idu);
+      if (m == null && u == null && dm == null && du == null) return;
+      const id = r.m.id + '__' + fecha, there = S.avances.get(id), base = there || r.M.last;
+      // Sin acumulado de este día no se puede proyectar: se pide antes de guardar
+      if (!there && m == null && u == null) { faltan.push(r.name); return; }
+      const rec = { metaId: r.m.id, fecha, cerrado, actualizado: now,
         monto: Math.max(0, Math.round(m != null ? m : base ? +base.monto || 0 : 0)),
-        unidades: Math.max(0, Math.round(u != null ? u : base ? +base.unidades || 0 : 0)) });
-      n++;
+        unidades: Math.max(0, Math.round(u != null ? u : base ? +base.unidades || 0 : 0)) };
+      const keep = (val, k) => { if (val != null) rec[k] = Math.max(0, Math.round(val)); else if (there && there[k] != null) rec[k] = there[k]; };
+      keep(dm, 'diaMonto'); keep(du, 'diaUnidades');
+      recs.push([id, rec, [im, iu, idm, idu]]);
     });
+    if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
+    recs.forEach(([id, rec, els]) => { els.forEach(x => { if (x) x.dataset.dirty = ''; }); put('avances', id, rec); n++; });
     if (!n) { S.cierreErr = 'Escribí al menos un monto o una cantidad.'; render(); return; }
     S.cierreErr = ''; S.cierreEdit = false; S.cierreEstado = null; S.bump = true;
     render();
@@ -1259,7 +1269,9 @@
     S.formFecha = fecha; S.formEstado = null;
     const id = meta.id + '__' + fecha;
     S.bump = true; S.draw = true;
-    put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString() });
+    const prevA = S.avances.get(id);
+    put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString(),
+      ...(prevA && prevA.diaMonto != null ? { diaMonto: prevA.diaMonto } : {}), ...(prevA && prevA.diaUnidades != null ? { diaUnidades: prevA.diaUnidades } : {}) });
     if (lastModel && done(lastModel) && !wasDone) { confetti(); toast('¡Objetivo cumplido!'); }
     else toast('Listo, recalculado');
   }
@@ -1329,7 +1341,7 @@
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
-    if (e.key === 'Enter' && /^ci-[mu]-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ci-(m|u|dm|du)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;

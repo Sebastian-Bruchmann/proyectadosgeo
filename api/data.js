@@ -59,7 +59,11 @@ function cleanAvance(b) {
   if (typeof b.metaId !== 'string' || !ID.test(b.metaId)) return null;
   const fecha = isoOr(b.fecha, null);
   if (!fecha) return null;
-  return { metaId: b.metaId, fecha, monto: num(b.monto), unidades: num(b.unidades), cerrado: b.cerrado === true, actualizado: ts(b.actualizado) };
+  const out = { metaId: b.metaId, fecha, monto: num(b.monto), unidades: num(b.unidades), cerrado: b.cerrado === true, actualizado: ts(b.actualizado) };
+  // Vendido en el día (opcional, solo para mostrar en el cierre; la proyección usa el acumulado)
+  if (typeof b.diaMonto === 'number' && isFinite(b.diaMonto)) out.diaMonto = num(b.diaMonto);
+  if (typeof b.diaUnidades === 'number' && isFinite(b.diaUnidades)) out.diaUnidades = num(b.diaUnidades);
+  return out;
 }
 
 /* ---------- candados ---------- */

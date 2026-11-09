@@ -190,6 +190,7 @@
   .ci-table td.st { align-self: end; }
   .ci-table .hide-sm { display: none; }
   .ci-table input.qin, .ci-table input.qin.qty { width: 100%; text-align: left; }
+  .ci-table.edit td { align-self: end; }
 }
 @media (max-width: 360px) {
   .brand h1 { font-size: 17px; }
@@ -222,4 +223,13 @@
 }
 @media (max-width: 560px) {
   .ci-table td.st { grid-column: 1 / -1; }
+}
+
+/* Carga del cierre: columnas de lo vendido en el día (solo para la imagen y el texto) */
+.ci-table th.dia { color: #fdba74; }
+.ci-table td.dia input.qin { border-color: rgba(249, 115, 22, 0.42); background: rgba(249, 115, 22, 0.08); }
+.ci-table td.dia input.qin:focus { border-color: #f97316; }
+@media (min-width: 561px) and (max-width: 900px) {
+  .ci-table.edit input.qin { width: 112px; }
+  .ci-table.edit input.qin.qty { width: 70px; }
 }
