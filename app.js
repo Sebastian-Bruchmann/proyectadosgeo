@@ -1044,7 +1044,7 @@
     const sel = sortCierre(rows.filter(r => r.sel && r.M));
     try { if (document.fonts) await document.fonts.ready; } catch (e) { }
     const logo = await getLogo();
-    const W = 1080, P = 60, rowH = 226, top = 250;
+    const W = 1080, P = 60, rowH = 820, top = 250;
     // Se dibuja sobre una capa transparente alta y después se recorta sobre el fondo
     const c = document.createElement('canvas'); c.width = W; c.height = 2100 + sel.length * rowH;
     const x = c.getContext('2d');
@@ -1066,79 +1066,107 @@
     txt('CIERRE DEL DÍA · GEO', tx, 96, F(800, 24), '#fdba74');
     x.font = F(800, 50); txt(fit(`${cap(DOW_L[D.getDay()])} ${D.getDate()} de ${MESES[D.getMonth()]}`, W - tx - P), tx, 150, F(800, 50), '#ffffff');
     x.font = F(500, 26); txt(fit(`${sel.length} ${sel.length === 1 ? 'local' : 'locales'} · ${T.habTrans} de ${T.H} días hábiles · quedan ${T.habRest}`, W - 2 * P), P, 214, F(500, 26), 'rgba(219,234,254,0.78)');
-    // Total: tres bloques (vendido en el día, proyección, para el 100 %)
+    // ===== Total: objetivo chico arriba; vendido del día, proyección y lo que falta, grandes =====
     const ix = P + 44, iw = W - 2 * P - 88;
-    const LBL = (s, Y) => txt(s, ix, Y, F(800, 21), 'rgba(255,237,213,0.92)');
-    const big = (s, Y, size) => { txt(s, ix, Y, F(900, size || 70), '#ffffff'); x.font = F(900, size || 70); return x.measureText(s).width; };
-    const sep = Y => { x.fillStyle = 'rgba(255,237,213,0.22)'; x.fillRect(ix, Y, iw, 2); };
+    const LBL = (s, Y, X, sz) => txt(s, X ?? ix, Y, F(800, sz || 22), 'rgba(255,237,213,0.92)');
+    const fitFont = (s, w, size, min, weight) => { let z = size; x.font = F(weight || 900, z); while (z > min && x.measureText(s).width > w) { z -= 2; x.font = F(weight || 900, z); } return z; };
+    const big = (s, Y, size, X, maxW) => { const z = maxW ? fitFont(s, maxW, size, 24) : size; txt(s, X ?? ix, Y, F(900, z), '#ffffff'); x.font = F(900, z); return x.measureText(s).width; };
+    const sep = (Y, X, w) => { x.fillStyle = 'rgba(255,237,213,0.22)'; x.fillRect(X ?? ix, Y, w ?? iw, 2); };
+    const opL = /^oper/i.test(T.unidad || '') ? 'OP' : (T.unidad || '').toUpperCase();
+    // Objetivo (acompaña): etiqueta, monto, % cumplido, barra con la línea del ritmo ideal y lo que llevan
+    const objGeo = s => { const lf = Math.max(15, Math.round(s * 0.58)), bh = Math.max(7, Math.round(s * 0.26)), sf = Math.max(16, Math.round(s * 0.64)); return { lf, bh, sf, h: lf + 8 + s + 12 + bh + 8 + sf + 6 }; };
+    const objHalf = (X, Y, w, lbl, main, p, esp, sub, s) => {
+      const g = objGeo(s), vb = Y + g.lf + 8 + s, by = vb + 12, col = ST_COL[esp ? colP(p / esp) : ''];
+      txt(lbl, X, Y + g.lf, F(800, g.lf), 'rgba(255,237,213,0.72)');
+      x.font = F(900, s); const pw = x.measureText(pct(p)).width;
+      const z = fitFont(main, w - pw - 16, s, 14, 800);
+      txt(main, X, vb, F(800, z), '#ffffff');
+      txt(pct(p), X + w, vb, F(900, s), col, 'right');
+      bar(X, by, w, g.bh, p, col);
+      if (esp > 0) { const mx = X + w * Math.min(1, esp); x.fillStyle = '#ffffff'; rr(mx - 2, by - 5, 4, g.bh + 10, 2); x.fill(); }
+      x.font = F(600, g.sf); txt(fit(sub, w), X, by + g.bh + 8 + g.sf, F(600, g.sf), 'rgba(219,234,254,0.78)');
+    };
+    // Proyección (importante): etiqueta, valor grande, % del mismo tamaño y barra
+    const proyGeo = s => { const lf = Math.max(16, Math.round(s * 0.34)), bh = Math.max(8, Math.round(s * 0.24)); return { lf, bh, h: lf + 8 + s + 14 + bh + 6 }; };
+    const proyRow = (X, Y, w, lbl, main, sub2, p, s) => {
+      const g = proyGeo(s), vb = Y + g.lf + 8 + s, by = vb + 14, col = ST_COL[colP(p)];
+      txt(lbl, X, Y + g.lf, F(800, g.lf), 'rgba(255,237,213,0.78)');
+      x.font = F(900, s); const pw = x.measureText(pct(p)).width;
+      let z = s;
+      const widthAt = zz => { x.font = F(900, zz); let ww = x.measureText(main).width; if (sub2) { x.font = F(700, Math.round(zz * 0.46)); ww += 10 + x.measureText(sub2).width; } return ww; };
+      while (z > 18 && widthAt(z) > w - pw - 18) z -= 2;
+      x.font = F(900, z); const w1 = x.measureText(main).width;
+      txt(main, X, vb, F(900, z), '#ffffff');
+      if (sub2) txt(sub2, X + w1 + 10, vb - 2, F(700, Math.round(z * 0.46)), 'rgba(255,237,213,0.9)');
+      txt(pct(p), X + w, vb, F(900, s), col, 'right');
+      bar(X, by, w, g.bh, p, col);
+    };
+    // Lo que hace falta por día: número grande + "por día"
+    const perDay = (X, Y, w, num, unit, s) => {
+      const uf = Math.max(19, Math.round(s * 0.46));
+      x.font = F(700, uf); const uw = x.measureText(unit).width;
+      const z = fitFont(num, w - uw - 14, s, 18);
+      txt(num, X, Y, F(900, z), '#ffffff'); x.font = F(900, z); const nw = x.measureText(num).width;
+      txt(unit, X + nw + 12, Y - 3, F(700, uf), 'rgba(255,237,213,0.9)');
+    };
     const missing = T.sinHoy.length;
     // Utilidad del día: solo el número, debajo de las operaciones (si algún local la cargó)
     const UD = utilData(fecha, sel), utN = UD.conDia ? money(UD.diaT) : null;
-    const blocks = [];
     // 75 % de lo vendido en el día (Acc), solo el número, debajo del monto
     const p75v = T.hoyN && T.objM ? Math.round(T.hoyM * 0.75) : null, p75 = p75v != null ? money(p75v) : null;
     // Total de utilidades: la suma de los dos números de abajo (75 % + utilidad), solo el número
     const totU = p75 && utN ? money(p75v + UD.diaT) : null;
-    blocks.push({ h: 128 + (p75 || utN ? 40 : 0) + (totU ? 48 : 0) + (missing || T.hoyGap ? 40 : 0), draw: Y => {
+    const blocks = [];
+    // 1) Objetivo general (chico): Acc y Op lado a lado
+    const objItems = [];
+    if (T.objM) objItems.push({ lbl: 'ACC', main: money(T.objM), p: T.pM, sub: `Llevan ${money(T.vendM)}` });
+    if (T.objU) objItems.push({ lbl: opL, main: `${nf0.format(T.objU)} ${u(T.objU)}`, p: T.pU, sub: `Llevan ${uSmart(T.vendU)} ${u(T.vendU)}` });
+    const OS = 28, GAP = 44, ohw = objItems.length > 1 ? (iw - GAP) / 2 : iw;
+    blocks.push({ h: 32 + objGeo(OS).h + 28, draw: Y => {
+      LBL(`OBJETIVO ${T.mes ? 'DEL MES' : 'DEL PERÍODO'} · % CUMPLIDO`, Y + 22, ix, 19);
+      objItems.forEach((o, k) => objHalf(ix + k * (ohw + GAP), Y + 32, ohw, o.lbl, o.main, o.p, T.esperado, o.sub, OS));
+      x.font = F(600, 19); txt(fit(`Línea blanca: ritmo ideal a la fecha (${pct(T.esperado)})  ·  ${T.habTrans} de ${T.H} días hábiles`, iw), ix, Y + 32 + objGeo(OS).h + 20, F(600, 19), 'rgba(219,234,254,0.6)');
+    } });
+    // 2) Vendido en el día (grande)
+    const BIG = 80;
+    const hoyLast = totU ? 222 : (p75 || utN) ? 166 : 114;
+    blocks.push({ h: hoyLast + (missing || T.hoyGap ? 44 : 0) + 18, draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
-      if (!T.hoyN) { big('Sin datos', Y + 100, 60); }
+      const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
+      x.font = F(800, 46); const usW = us && T.objM ? x.measureText(us).width + 30 : 0;
+      if (!T.hoyN) big('Sin datos', Y + 112, 64);
       else {
-        if (T.objM) big(money(T.hoyM), Y + 100);
-        const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
-        if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
+        if (T.objM) big(money(T.hoyM), Y + 114, BIG, ix, iw - usW);
+        if (T.objM && us) txt(us, ix + iw, Y + 112, F(800, 46), '#ffffff', 'right'); else if (us) big(us, Y + 114, BIG, ix, iw);
       }
-      if (p75) txt(p75, ix, Y + 142, F(800, 32), '#ffffff');
-      if (utN) txt(utN, ix + iw, Y + 142, F(800, 32), '#ffffff', 'right');
-      if (totU) txt(totU, ix + iw, Y + 190, F(900, 38), '#fdba74', 'right');
-      const yN = Y + 142 + (p75 || utN ? 40 : 0) + (totU ? 48 : 0);
-      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, yN, F(600, 23), '#fcd34d'); }
+      if (p75) txt(p75, ix, Y + 166, F(800, 40), '#ffffff');
+      if (utN) txt(utN, ix + iw, Y + 166, F(800, 40), '#ffffff', 'right');
+      if (totU) txt(totU, ix + iw, Y + 222, F(900, 46), '#fdba74', 'right');
+      if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + hoyLast + 44, F(600, 23), '#fcd34d'); }
     } });
-    // Fila con la misma entidad para Acc y Op: etiqueta, valor grande, % a la derecha y barra (con marca opcional)
-    const opL = /^oper/i.test(T.unidad || '') ? 'Op' : T.unidad;
-    const metricRow = (Y, lbl, main, sub2, p, col, subTxt, mark) => {
-      txt(lbl.toUpperCase(), ix, Y + 22, F(800, 19), 'rgba(255,237,213,0.78)');
-      x.font = F(900, 50); const w1 = x.measureText(main).width;
-      txt(main, ix, Y + 72, F(900, 50), '#ffffff');
-      if (sub2) txt(sub2, ix + w1 + 12, Y + 70, F(700, 26), 'rgba(255,237,213,0.9)');
-      txt(pct(p), ix + iw, Y + 72, F(900, 50), col, 'right');
-      bar(ix, Y + 90, iw, 14, p, col);
-      if (mark != null && mark > 0) { const mx = ix + iw * Math.min(1, mark); x.fillStyle = '#ffffff'; rr(mx - 2, Y + 84, 4, 26, 2); x.fill(); }
-      if (subTxt) { x.font = F(600, 23); txt(fit(subTxt, iw), ix, Y + 138, F(600, 23), 'rgba(219,234,254,0.85)'); }
-      return subTxt ? 154 : 120;
-    };
-    // Objetivo general al principio: cuánto es, cuánto se lleva, % cumplido y lo que falta
-    const objRows = [];
-    if (T.objM) objRows.push({ lbl: 'Acc', main: money(T.objM), sub2: null, p: T.pM, sub: `Llevan ${money(T.vendM)}  ·  faltan ${money(T.faltaM)}` });
-    if (T.objU) objRows.push({ lbl: opL, main: nf0.format(T.objU), sub2: u(T.objU), p: T.pU, sub: `Llevan ${uSmart(T.vendU)}  ·  faltan ${uSmart(T.faltaU)}` });
-    blocks.unshift({ h: 44 + objRows.length * 154 + 34, draw: Y => {
-      LBL(`OBJETIVO ${T.mes ? 'DEL MES' : 'DEL PERÍODO'} · % CUMPLIDO`, Y + 26);
-      let yy = Y + 44;
-      objRows.forEach(r => { yy += metricRow(yy, r.lbl, r.main, r.sub2, r.p, ST_COL[T.esperado ? colP(r.p / T.esperado) : ''], r.sub, T.esperado); });
-      x.font = F(600, 22); txt(fit(`Ritmo ideal a la fecha: ${pct(T.esperado)} (línea blanca)  ·  ${T.habTrans} de ${T.H} días hábiles`, iw), ix, yy + 22, F(600, 22), 'rgba(219,234,254,0.7)');
-    } });
-    // Proyección: Acc y Op con el mismo tamaño
-    const pc = T.proyP;
+    // 3) Proyección (grande): Acc y Op con el mismo tamaño
+    const pc = T.proyP, PS = 62;
     const proyRows = [];
     if (pc != null) {
-      if (T.objM) proyRows.push({ lbl: 'Acc', main: money(T.proyM), sub2: null, p: T.proyM / T.objM });
+      if (T.objM) proyRows.push({ lbl: 'ACC', main: money(T.proyM), sub2: null, p: T.proyM / T.objM });
       if (T.objU) proyRows.push({ lbl: opL, main: nf0.format(T.proyU), sub2: u(T.proyU), p: T.proyU / T.objU });
     }
-    blocks.push({ h: pc == null ? 128 : 44 + proyRows.length * 120, draw: Y => {
+    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
-      if (pc == null) { big('—', Y + 100, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 92, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
-      let yy = Y + 44;
-      proyRows.forEach(r => { yy += metricRow(yy, r.lbl, r.main, r.sub2, r.p, ST_COL[colP(r.p)], null, null); });
+      if (pc == null) { big('—', Y + 104, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 96, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
+      let yy = Y + 42;
+      proyRows.forEach(r => { proyRow(ix, yy, iw, r.lbl, r.main, r.sub2, r.p, PS); yy += proyGeo(PS).h + 12; });
     } });
+    // 4) Para llegar al 100 % (grande)
     const fin = done(T) || T.ended || !T.habRest;
-    blocks.push({ h: fin ? 128 : 164, draw: Y => {
+    blocks.push({ h: fin ? 130 : (T.objM && T.objU ? 244 : 180), draw: Y => {
       LBL('PARA LLEGAR AL 100 %', Y + 26);
-      if (fin) { big(done(T) ? '¡Objetivo cumplido!' : 'Período terminado', Y + 100, 60); return; }
-      let w0 = 0;
-      if (T.objM) { w0 = big(money(T.necM), Y + 100); txt('por día', ix + w0 + 16, Y + 98, F(700, 28), 'rgba(255,237,213,0.9)'); }
-      const us = T.objU ? `${uSmart(T.necU)} ${u(T.necU)}${T.objM ? '' : ' por día'}` : '';
-      if (T.objM && us) txt(us, ix + iw, Y + 98, F(800, 36), '#ffffff', 'right'); else if (us) big(us, Y + 100);
+      if (fin) { big(done(T) ? '¡Objetivo cumplido!' : 'Período terminado', Y + 106, 60, ix, iw); return; }
+      let yy = Y + 114;
+      if (T.objM) perDay(ix, yy, iw, money(T.necM), 'por día', BIG);
+      if (T.objU) { if (T.objM) yy += 64; perDay(ix, yy, iw, uSmart(T.necU), `${u(T.necU)} por día`, T.objM ? 50 : BIG); }
       x.font = F(600, 25);
-      txt(fit(`Faltan ${T.objM ? money(T.faltaM) : `${uSmart(T.faltaU)} ${u(T.faltaU)}`} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`, iw), ix, Y + 146, F(600, 25), 'rgba(219,234,254,0.88)');
+      txt(fit(`Faltan ${[T.objM ? money(T.faltaM) : '', T.objU ? `${uSmart(T.faltaU)} ${u(T.faltaU)}` : ''].filter(Boolean).join(' y ')} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`, iw), ix, yy + 48, F(600, 25), 'rgba(219,234,254,0.88)');
     } });
     const SEP = 34, headH = 92, footH = 30;
     const totH = headH + blocks.reduce((a, b) => a + b.h, 0) + SEP * (blocks.length - 1) + footH;
@@ -1148,37 +1176,70 @@
     if (st.t) { x.font = F(700, 22); const tw = x.measureText(st.t).width + 36; rr(ix + iw - tw, y + 32, tw, 38, 19); x.fillStyle = 'rgba(0,0,0,0.25)'; x.fill(); txt(st.t, ix + iw - tw + 18, y + 59, F(700, 22), ST_COL[st.k]); }
     let yy = y + headH;
     blocks.forEach((b, k) => { b.draw(yy); yy += b.h; if (k < blocks.length - 1) { sep(yy + SEP / 2 - 1); yy += SEP; } });
-    // Locales: la proyección va separada (Acc en pesos, Op en operaciones), cada una con su color
-    y = top + totH + 40;
-    const blkW = o => { x.font = F(900, 38); const a = x.measureText(pct(o.p)).width; x.font = F(700, 21); return a + 10 + x.measureText(o.k).width; };
-    const colW = Math.max(0, ...sel.map(r => { const it = proySep(r.M); return it.length > 1 ? blkW(it[it.length - 1]) : 0; }));
+    // ===== Locales: mismo formato que el total, como tarjeta propia =====
+    y = top + totH + 44;
+    const cx = P + 38, cw = W - 2 * P - 76, CG = 36, chw = (cw - CG) / 2;
+    const lsep = Y => { x.fillStyle = 'rgba(255,255,255,0.12)'; x.fillRect(cx, Y, cw, 2); };
+    const SL = (s, Y) => txt(s, cx, Y, F(800, 19), 'rgba(255,237,213,0.85)');
     sel.forEach(r => {
-      const M = r.M, U = n => uName(M.unidad, n), items = proySep(M);
-      glass(P, y, W - 2 * P, rowH - 18, 30, false);
-      const rx = P + 34, rw = W - 2 * P - 68;
-      let xr = rx + rw;
-      for (let k = items.length - 1; k >= 0; k--) {
-        const o = items[k], vs = pct(o.p);
-        x.font = F(900, 38); const vw = x.measureText(vs).width;
-        txt(vs, xr, y + 54, F(900, 38), ST_COL[colP(o.p)], 'right');
-        x.font = F(700, 21); const lw = x.measureText(o.k).width;
-        txt(o.k, xr - vw - 10, y + 53, F(700, 21), 'rgba(219,234,254,0.72)', 'right');
-        xr = k === items.length - 1 && items.length > 1 ? rx + rw - colW - 34 : xr - (vw + 10 + lw + 34);
+      const M = r.M, U = n => uName(M.unidad, n), y0 = y;
+      const oL = /^oper/i.test(M.unidad || '') ? 'OP' : (M.unidad || '').toUpperCase();
+      const two = M.objM && M.objU, colX = k => cx + k * (chw + CG), colW = two ? chw : cw;
+      let cy = y0 + 64;
+      // Encabezado: nombre grande y estado
+      const s = stOf(M);
+      let chipW = 0;
+      if (s.t) { x.font = F(700, 21); chipW = x.measureText(s.t).width + 34; rr(cx + cw - chipW, y0 + 30, chipW, 38, 19); x.fillStyle = 'rgba(0,0,0,0.28)'; x.fill(); txt(s.t, cx + cw - chipW + 17, y0 + 56, F(700, 21), ST_COL[s.k]); }
+      x.font = F(900, 40); txt(fit(r.name, cw - chipW - 24), cx, cy, F(900, 40), '#ffffff');
+      cy += 24;
+      // Objetivo (chico)
+      const oItems = [];
+      if (M.objM) oItems.push({ lbl: 'OBJETIVO ACC', main: money(M.objM), p: M.pM, sub: `Llevan ${money(M.vendM)}` });
+      if (M.objU) oItems.push({ lbl: `OBJETIVO ${oL}`, main: `${nf0.format(M.objU)} ${U(M.objU)}`, p: M.pU, sub: `Llevan ${uSmart(M.vendU)} ${U(M.vendU)}` });
+      oItems.forEach((o, k) => objHalf(colX(k), cy, colW, o.lbl, o.main, o.p, M.esperado, o.sub, 24));
+      cy += objGeo(24).h + 14; lsep(cy); cy += 20;
+      // Vendido en el día
+      SL(esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`, cy + 20);
+      const U2 = utilOf(M, fecha), utL = U2.dia ? money(U2.diaT) : null;
+      const p75L = r.hoy && M.objM ? Math.round(r.hoy.m * 0.75) : null, totL = p75L != null && utL ? money(p75L + U2.diaT) : null;
+      if (!r.hoy) {
+        txt(`Sin dato del día${M.last ? ` (último ${fDM(M.last.fecha)})` : ''}`, cx, cy + 68, F(800, 30), '#fcd34d');
+        if (utL) txt(utL, cx + cw, cy + 68, F(800, 30), '#ffffff', 'right');
+        cy += 88;
+      } else {
+        const us = M.objU ? `${uSmart(r.hoy.u)} ${U(r.hoy.u)}` : '';
+        x.font = F(800, 32); const usW = us && M.objM ? x.measureText(us).width + 24 : 0;
+        if (M.objM) big(money(r.hoy.m), cy + 76, 52, cx, cw - usW);
+        if (M.objM && us) txt(us, cx + cw, cy + 74, F(800, 32), '#ffffff', 'right'); else if (us) big(us, cy + 76, 52, cx, cw);
+        let last = cy + 76;
+        if (p75L != null || utL) { last = cy + 116; if (p75L != null) txt(money(p75L), cx, last, F(800, 28), '#ffffff'); if (utL) txt(utL, cx + cw, last, F(800, 28), '#ffffff', 'right'); }
+        if (totL) { last = cy + 156; txt(totL, cx + cw, last, F(900, 32), '#fdba74', 'right'); }
+        cy = last + 16;
       }
-      txt(M.started ? 'proyectado' : 'cumplido', rx + rw, y + 82, F(600, 18), 'rgba(219,234,254,0.55)', 'right');
-      x.font = F(800, 32); txt(fit(r.name, xr - rx), rx, y + 54, F(800, 32), '#ffffff');
-      const bm = (m, n) => [M.objM ? money(m) : '', M.objU ? `${uSmart(n)} ${U(n)}` : ''].filter(Boolean).join(' · ');
-      const dia = esHoy ? 'Hoy' : cap(fDow(fecha));
-      const hoyS = r.hoy ? `${dia} ${bm(r.hoy.m, r.hoy.u)}` : `${dia} sin dato${M.last ? ` (último ${fDM(M.last.fecha)})` : ''}`;
-      x.font = F(600, 23); txt(fit(hoyS, rw - 150), rx, y + 98, F(600, 23), r.hoy ? 'rgba(219,234,254,0.85)' : '#fcd34d');
-      const acS = `Llevan ${[M.objM ? `${money(M.vendM)} (${pct(M.pM)})` : '', M.objU ? `${uSmart(M.vendU)} ${U(M.vendU)} (${pct(M.pU)})` : ''].filter(Boolean).join(' · ')}`;
-      x.font = F(600, 23); txt(fit(acS, rw), rx, y + 132, F(600, 23), 'rgba(219,234,254,0.85)');
-      const need = done(M) ? 'Objetivo cumplido' : !M.habRest ? 'Período terminado' : `Para el 100 %: ${[M.objM ? money(M.necM) : '', M.objU ? `${uSmart(M.necU)} ${U(M.necU)}` : ''].filter(Boolean).join(' y ')} por día`;
-      x.font = F(700, 24); txt(fit(need, rw), rx, y + 168, F(700, 24), '#ffffff');
-      // una barra por cada proyección, en el mismo orden que los porcentajes de arriba
-      const gap = 24, bw = items.length > 1 ? (rw - gap) / 2 : rw;
-      items.forEach((o, k) => bar(rx + k * (bw + gap), y + 186, bw, 7, o.p, ST_COL[colP(o.p)]));
-      y += rowH;
+      lsep(cy); cy += 20;
+      // Proyección: Acc y Op lado a lado, mismo tamaño
+      SL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, cy + 20);
+      const pItems = [];
+      if (M.objM) pItems.push({ lbl: 'ACC', main: money(M.proyM != null ? M.proyM : M.vendM), sub2: null, p: M.proyM != null ? M.proyM / M.objM : M.pM });
+      if (M.objU) pItems.push({ lbl: oL, main: nf0.format(M.proyU != null ? M.proyU : M.vendU), sub2: U(M.proyU != null ? M.proyU : M.vendU), p: M.proyU != null ? M.proyU / M.objU : M.pU });
+      pItems.forEach((o, k) => proyRow(colX(k), cy + 30, colW, o.lbl, o.main, o.sub2, o.p, 38));
+      cy += 30 + proyGeo(38).h + 12; lsep(cy); cy += 20;
+      // Para llegar al 100 %
+      SL('PARA LLEGAR AL 100 %', cy + 20);
+      if (done(M) || !M.habRest) {
+        txt(done(M) ? '¡Objetivo cumplido!' : 'Período terminado', cx, cy + 70, F(900, 38), done(M) ? ST_COL.ok : '#ffffff');
+        cy += 90;
+      } else {
+        if (M.objM) perDay(colX(0), cy + 72, colW, money(M.necM), 'por día', 40);
+        if (M.objU) perDay(colX(M.objM ? 1 : 0), cy + 72, colW, uSmart(M.necU), `${U(M.necU)} por día`, 40);
+        x.font = F(600, 21);
+        txt(fit(`Faltan ${[M.objM ? money(M.faltaM) : '', M.objU ? `${uSmart(M.faltaU)} ${U(M.faltaU)}` : ''].filter(Boolean).join(' y ')} en ${M.habRest} ${M.habRest === 1 ? 'día hábil' : 'días hábiles'}`, cw), cx, cy + 110, F(600, 21), 'rgba(219,234,254,0.82)');
+        cy += 128;
+      }
+      const ch = cy - y0 + 14;
+      // la tarjeta va por detrás de lo ya dibujado
+      x.save(); x.globalCompositeOperation = 'destination-over'; glass(P, y0, W - 2 * P, ch, 34, false); x.restore();
+      y = y0 + ch + 26;
     });
     // Fondo GEO y recorte
     const Hh = y + 70;
