@@ -1076,8 +1076,10 @@
     const UD = utilData(fecha, sel), utN = UD.conDia ? money(UD.diaT) : null;
     const blocks = [];
     // 75 % de lo vendido en el día (Acc), solo el número, debajo del monto
-    const p75 = T.hoyN && T.objM ? money(Math.round(T.hoyM * 0.75)) : null;
-    blocks.push({ h: 128 + (p75 || utN ? 40 : 0) + (missing || T.hoyGap ? 40 : 0), draw: Y => {
+    const p75v = T.hoyN && T.objM ? Math.round(T.hoyM * 0.75) : null, p75 = p75v != null ? money(p75v) : null;
+    // Total de utilidades: la suma de los dos números de abajo (75 % + utilidad), solo el número
+    const totU = p75 && utN ? money(p75v + UD.diaT) : null;
+    blocks.push({ h: 128 + (p75 || utN ? 40 : 0) + (totU ? 48 : 0) + (missing || T.hoyGap ? 40 : 0), draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
       if (!T.hoyN) { big('Sin datos', Y + 100, 60); }
       else {
@@ -1087,7 +1089,8 @@
       }
       if (p75) txt(p75, ix, Y + 142, F(800, 32), '#ffffff');
       if (utN) txt(utN, ix + iw, Y + 142, F(800, 32), '#ffffff', 'right');
-      const yN = Y + (p75 || utN ? 182 : 142);
+      if (totU) txt(totU, ix + iw, Y + 190, F(900, 38), '#fdba74', 'right');
+      const yN = Y + 142 + (p75 || utN ? 40 : 0) + (totU ? 48 : 0);
       if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, yN, F(600, 23), '#fcd34d'); }
     } });
     const pc = T.proyP;
