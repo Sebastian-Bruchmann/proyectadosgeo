@@ -1046,7 +1046,7 @@
     const logo = await getLogo();
     const W = 1080, P = 60, rowH = 226, top = 250;
     // Se dibuja sobre una capa transparente alta y después se recorta sobre el fondo
-    const c = document.createElement('canvas'); c.width = W; c.height = 1700 + sel.length * rowH;
+    const c = document.createElement('canvas'); c.width = W; c.height = 2100 + sel.length * rowH;
     const x = c.getContext('2d');
     const F = (w, s) => `${w} ${s}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
     const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
@@ -1093,23 +1093,41 @@
       const yN = Y + 142 + (p75 || utN ? 40 : 0) + (totU ? 48 : 0);
       if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, yN, F(600, 23), '#fcd34d'); }
     } });
+    // Fila con la misma entidad para Acc y Op: etiqueta, valor grande, % a la derecha y barra (con marca opcional)
+    const opL = /^oper/i.test(T.unidad || '') ? 'Op' : T.unidad;
+    const metricRow = (Y, lbl, main, sub2, p, col, subTxt, mark) => {
+      txt(lbl.toUpperCase(), ix, Y + 22, F(800, 19), 'rgba(255,237,213,0.78)');
+      x.font = F(900, 50); const w1 = x.measureText(main).width;
+      txt(main, ix, Y + 72, F(900, 50), '#ffffff');
+      if (sub2) txt(sub2, ix + w1 + 12, Y + 70, F(700, 26), 'rgba(255,237,213,0.9)');
+      txt(pct(p), ix + iw, Y + 72, F(900, 50), col, 'right');
+      bar(ix, Y + 90, iw, 14, p, col);
+      if (mark != null && mark > 0) { const mx = ix + iw * Math.min(1, mark); x.fillStyle = '#ffffff'; rr(mx - 2, Y + 84, 4, 26, 2); x.fill(); }
+      if (subTxt) { x.font = F(600, 23); txt(fit(subTxt, iw), ix, Y + 138, F(600, 23), 'rgba(219,234,254,0.85)'); }
+      return subTxt ? 154 : 120;
+    };
+    // Objetivo general al principio: cuánto es, cuánto se lleva, % cumplido y lo que falta
+    const objRows = [];
+    if (T.objM) objRows.push({ lbl: 'Acc', main: money(T.objM), sub2: null, p: T.pM, sub: `Llevan ${money(T.vendM)}  ·  faltan ${money(T.faltaM)}` });
+    if (T.objU) objRows.push({ lbl: opL, main: nf0.format(T.objU), sub2: u(T.objU), p: T.pU, sub: `Llevan ${uSmart(T.vendU)}  ·  faltan ${uSmart(T.faltaU)}` });
+    blocks.unshift({ h: 44 + objRows.length * 154 + 34, draw: Y => {
+      LBL(`OBJETIVO ${T.mes ? 'DEL MES' : 'DEL PERÍODO'} · % CUMPLIDO`, Y + 26);
+      let yy = Y + 44;
+      objRows.forEach(r => { yy += metricRow(yy, r.lbl, r.main, r.sub2, r.p, ST_COL[T.esperado ? colP(r.p / T.esperado) : ''], r.sub, T.esperado); });
+      x.font = F(600, 22); txt(fit(`Ritmo ideal a la fecha: ${pct(T.esperado)} (línea blanca)  ·  ${T.habTrans} de ${T.H} días hábiles`, iw), ix, yy + 22, F(600, 22), 'rgba(219,234,254,0.7)');
+    } });
+    // Proyección: Acc y Op con el mismo tamaño
     const pc = T.proyP;
-    blocks.push({ h: pc == null ? 128 : 150 + (T.objM && T.objU ? 44 : 0), draw: Y => {
+    const proyRows = [];
+    if (pc != null) {
+      if (T.objM) proyRows.push({ lbl: 'Acc', main: money(T.proyM), sub2: null, p: T.proyM / T.objM });
+      if (T.objU) proyRows.push({ lbl: opL, main: nf0.format(T.proyU), sub2: u(T.proyU), p: T.proyU / T.objU });
+    }
+    blocks.push({ h: pc == null ? 128 : 44 + proyRows.length * 120, draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
       if (pc == null) { big('—', Y + 100, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 92, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
-      big(T.objM ? money(T.proyM) : `${nf0.format(T.proyU)} ${u(T.proyU)}`, Y + 100);
-      const tLbl = T.objM ? 'Acc' : (/^oper/i.test(T.unidad || '') ? 'Op' : T.unidad);
-      x.font = F(900, 56); const pw0 = x.measureText(pct(pc)).width;
-      txt(pct(pc), ix + iw, Y + 98, F(900, 56), ST_COL[colP(pc)], 'right');
-      txt(tLbl, ix + iw - pw0 - 12, Y + 96, F(700, 24), 'rgba(255,237,213,0.85)', 'right');
-      bar(ix, Y + 122, iw, 16, pc, ST_COL[colP(pc)]);
-      if (T.objM && T.objU) {
-        const pO = T.proyU / T.objU; let cx = ix;
-        const seg = (t, f, c) => { x.font = f; x.fillStyle = c; x.textAlign = 'left'; x.fillText(t, cx, Y + 182); cx += x.measureText(t).width; };
-        seg(/^oper/i.test(T.unidad || '') ? 'Op ' : `${T.unidad} `, F(700, 25), 'rgba(255,237,213,0.85)');
-        seg(pct(pO), F(900, 30), ST_COL[colP(pO)]);
-        seg(`  ·  ${nf0.format(T.proyU)} ${u(T.proyU)}  ·  objetivo ${money(T.objM)}`, F(600, 25), 'rgba(219,234,254,0.85)');
-      }
+      let yy = Y + 44;
+      proyRows.forEach(r => { yy += metricRow(yy, r.lbl, r.main, r.sub2, r.p, ST_COL[colP(r.p)], null, null); });
     } });
     const fin = done(T) || T.ended || !T.habRest;
     blocks.push({ h: fin ? 128 : 164, draw: Y => {
@@ -1122,18 +1140,14 @@
       x.font = F(600, 25);
       txt(fit(`Faltan ${T.objM ? money(T.faltaM) : `${uSmart(T.faltaU)} ${u(T.faltaU)}`} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`, iw), ix, Y + 146, F(600, 25), 'rgba(219,234,254,0.88)');
     } });
-    const acum = [T.objM ? `${money(T.vendM)} de ${money(T.objM)} (${pct(T.pM)})` : '', T.objU ? `${uSmart(T.vendU)} de ${uSmart(T.objU)} ${u(T.objU)}` : ''].filter(Boolean).join('  ·  ');
-    const SEP = 34, headH = 92, footH = 64;
-    const totH = headH + blocks.reduce((a, b) => a + b.h, 0) + SEP * blocks.length + footH;
+    const SEP = 34, headH = 92, footH = 30;
+    const totH = headH + blocks.reduce((a, b) => a + b.h, 0) + SEP * (blocks.length - 1) + footH;
     let y = top; glass(P, y, W - 2 * P, totH, 40, true);
     const st = stTot(T);
     txt(`TOTAL · ${T.n} ${T.n === 1 ? 'LOCAL' : 'LOCALES'}`, ix, y + 58, F(800, 22), '#fdba74');
     if (st.t) { x.font = F(700, 22); const tw = x.measureText(st.t).width + 36; rr(ix + iw - tw, y + 32, tw, 38, 19); x.fillStyle = 'rgba(0,0,0,0.25)'; x.fill(); txt(st.t, ix + iw - tw + 18, y + 59, F(700, 22), ST_COL[st.k]); }
     let yy = y + headH;
-    blocks.forEach((b, k) => { b.draw(yy); yy += b.h; sep(yy + SEP / 2 - 1); yy += SEP; });
-    x.font = F(600, 24);
-    const acum2 = [T.objM ? `${money(T.vendM)} (${pct(T.pM)})` : '', T.objU ? `${uSmart(T.vendU)} ${u(T.vendU)}${T.objM ? '' : ` (${pct(T.pU)})`}` : ''].filter(Boolean).join('  ·  ');
-    txt(fit(x.measureText(`Acumulado: ${acum}`).width <= iw ? `Acumulado: ${acum}` : `Acumulado: ${acum2}`, iw), ix, yy + 30, F(600, 24), 'rgba(219,234,254,0.85)');
+    blocks.forEach((b, k) => { b.draw(yy); yy += b.h; if (k < blocks.length - 1) { sep(yy + SEP / 2 - 1); yy += SEP; } });
     // Locales: la proyección va separada (Acc en pesos, Op en operaciones), cada una con su color
     y = top + totH + 40;
     const blkW = o => { x.font = F(900, 38); const a = x.measureText(pct(o.p)).width; x.font = F(700, 21); return a + 10 + x.measureText(o.k).width; };
