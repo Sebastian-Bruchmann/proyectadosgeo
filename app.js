@@ -1109,6 +1109,15 @@
       txt(num, X, Y, F(900, z), '#ffffff'); x.font = F(900, z); const nw = x.measureText(num).width;
       txt(unit, X + nw + 12, Y - 3, F(700, uf), 'rgba(255,237,213,0.9)');
     };
+    // Línea de tres números: izquierda blanco, medio dorado, derecha blanco; achica la letra si se pisan
+    const triLine = (X, w, Y, left, mid, right, s) => {
+      let z = s;
+      const ws = zz => { x.font = F(800, zz); const l = left ? x.measureText(left).width : 0, r = right ? x.measureText(right).width : 0; x.font = F(900, Math.round(zz * 1.15)); const m = mid ? x.measureText(mid).width : 0; return { l, r, m }; };
+      for (; z > 16; z -= 2) { const q = ws(z); if (Math.max(q.l, q.r) + q.m / 2 + 18 <= w / 2) break; }
+      if (left) txt(left, X, Y, F(800, z), '#ffffff');
+      if (right) txt(right, X + w, Y, F(800, z), '#ffffff', 'right');
+      if (mid) txt(mid, X + w / 2, Y, F(900, Math.round(z * 1.15)), '#fdba74', 'center');
+    };
     const missing = T.sinHoy.length;
     // Utilidad del día: solo el número, debajo de las operaciones (si algún local la cargó)
     const UD = utilData(fecha, sel), utN = UD.conDia ? money(UD.diaT) : null;
@@ -1140,9 +1149,7 @@
         if (T.objM && us) txt(us, ix + iw, Y + 112, F(800, 46), '#ffffff', 'right'); else if (us) big(us, Y + 114, BIG, ix, iw);
       }
       // misma línea: 75 % a la izquierda, total de utilidades (dorado) en el medio, utilidad a la derecha
-      if (p75) txt(p75, ix, Y + 168, F(800, 40), '#ffffff');
-      if (utN) txt(utN, ix + iw, Y + 168, F(800, 40), '#ffffff', 'right');
-      if (totU) txt(totU, ix + iw / 2, Y + 168, F(900, 46), '#fdba74', 'center');
+      if (p75 || utN) triLine(ix, iw, Y + 168, p75, totU, utN, 40);
       if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + hoyLast + 44, F(600, 23), '#fcd34d'); }
     } });
     // 3) Proyección (grande): Acc y Op con el mismo tamaño
@@ -1152,11 +1159,21 @@
       if (T.objM) proyRows.push({ lbl: 'ACC', main: money(T.proyM), sub2: null, p: T.proyM / T.objM });
       if (T.objU) proyRows.push({ lbl: opL, main: nf0.format(T.proyU), sub2: u(T.proyU), p: T.proyU / T.objU });
     }
-    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12), draw: Y => {
+    // Utilidad proyectada (igual que en el vendido del día, solo números):
+    //  izquierda: 75 % del Acc proyectado · derecha: Op proyectadas × utilidad promedio por operación de los días cargados
+    //  en el medio (dorado): la suma
+    const avgUt = Ms => { let ut = 0, n = 0; Ms.forEach(M => M.av.forEach(a => { if (UTIL.some(o => a[o.f] != null)) { ut += utTot(a); n += UTIL.reduce((q, o) => q + (+a[o.f] || 0), 0); } })); return n ? ut / n : null; };
+    const avgG = avgUt(sel.map(r => r.M));
+    const pUtOp = avgG == null || !T.objU || T.proyU == null ? null : Math.round(T.proyU * avgG);
+    const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
+    const totP = p75P != null && pUtOp != null ? p75P + pUtOp : null;
+    const utLine = pc != null && (p75P != null || pUtOp != null);
+    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
       if (pc == null) { big('—', Y + 104, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 96, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
       let yy = Y + 42;
       proyRows.forEach(r => { proyRow(ix, yy, iw, r.lbl, r.main, r.sub2, r.p, PS); yy += proyGeo(PS).h + 12; });
+      if (utLine) triLine(ix, iw, yy + 38, p75P != null ? money(p75P) : null, totP != null ? money(totP) : null, pUtOp != null ? money(pUtOp) : null, 40);
     } });
     // 4) Para llegar al 100 % (grande)
     const fin = done(T) || T.ended || !T.habRest;
@@ -1213,8 +1230,7 @@
         if (M.objM) big(money(r.hoy.m), cy + 76, 52, cx, cw - usW);
         if (M.objM && us) txt(us, cx + cw, cy + 74, F(800, 32), '#ffffff', 'right'); else if (us) big(us, cy + 76, 52, cx, cw);
         let last = cy + 76;
-        if (p75L != null || utL) { last = cy + 118; if (p75L != null) txt(money(p75L), cx, last, F(800, 28), '#ffffff'); if (utL) txt(utL, cx + cw, last, F(800, 28), '#ffffff', 'right'); }
-        if (totL) txt(totL, cx + cw / 2, cy + 118, F(900, 32), '#fdba74', 'center');
+        if (p75L != null || utL) { last = cy + 118; triLine(cx, cw, last, p75L != null ? money(p75L) : null, totL, utL, 28); }
         cy = last + 16;
       }
       lsep(cy); cy += 20;
@@ -1388,7 +1404,7 @@
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);
