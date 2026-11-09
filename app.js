@@ -701,6 +701,35 @@
     const ev = val(e), qv = val(q);
     o.textContent = typed(e) != null || typed(q) != null || ev != null || qv != null ? money(netoDia(ev, qv)) : (o.dataset.base !== '' ? money(+o.dataset.base) : '—');
   }
+  /* Utilidad (aparte del cierre): cantidad vendida en el día × lo que deja cada cosa */
+  const UTIL = [
+    { f: 'utClaro', k: 'uc', lbl: 'Claro', val: 34388 },
+    { f: 'utEquipos', k: 'ue', lbl: 'Equipos', val: 85900 },
+    { f: 'utElectros', k: 'ux', lbl: 'Electros', val: 13856 },
+  ];
+  const utTot = q => UTIL.reduce((a, o) => a + (+q[o.f] || 0) * o.val, 0);
+  function utilOf(M, fecha) {
+    const cur = M.av.find(a => a.fecha === fecha);
+    const dia = cur && UTIL.some(o => cur[o.f] != null) ? Object.fromEntries(UTIL.map(o => [o.f, +cur[o.f] || 0])) : null;
+    const mes = Object.fromEntries(UTIL.map(o => [o.f, M.av.reduce((a, x) => a + (+x[o.f] || 0), 0)]));
+    return { dia, mes, diaT: dia ? utTot(dia) : null, mesT: utTot(mes) };
+  }
+  function utilData(fecha, sel) {
+    const rows = sel.map(r => ({ r, U: utilOf(r.M, fecha) })).sort((a, b) => (b.U.diaT ?? -1) - (a.U.diaT ?? -1) || b.U.mesT - a.U.mesT);
+    const sumQ = pick => Object.fromEntries(UTIL.map(o => [o.f, rows.reduce((a, x) => a + ((pick(x.U) || {})[o.f] || 0), 0)]));
+    const dia = sumQ(U => U.dia), mes = sumQ(U => U.mes);
+    return { rows, dia, mes, diaT: utTot(dia), mesT: utTot(mes), conDia: rows.filter(x => x.U.dia).length, sinDia: rows.filter(x => !x.U.dia).map(x => x.r.name) };
+  }
+  function updUtTot(id) {
+    const o = document.getElementById('ci-ut-' + id); if (!o) return;
+    const q = {}; let any = false;
+    UTIL.forEach(u => {
+      const el = document.getElementById(`ci-${u.k}-${id}`); if (!el) return;
+      const t = parseNum(el.value), v = t != null ? t : (el.dataset.base !== '' ? +el.dataset.base : null);
+      if (v != null) any = true; q[u.f] = v || 0;
+    });
+    o.textContent = any ? money(utTot(q)) : '—';
+  }
   /* Proyección separada: Acc (pesos) y Op (operaciones / la unidad que use el objetivo) */
   const opLbl = M => /^oper/i.test(M.unidad || '') ? 'Op' : (M.unidad || 'Unidades');
   const proySep = M => {
@@ -795,7 +824,8 @@
       <div class="panel-head"><div><h2 id="ci-prev-h">Así sale la imagen</h2><p>Es lo que se manda con "Enviar imagen". En el celu se abre para compartir directo a WhatsApp; en la compu se descarga.</p></div></div>
       <div class="ci-img"><img id="ci-img" alt="Vista previa del cierre del día"><p class="muted" id="ci-img-wait">Armando la imagen…</p></div>
     </section>
-    <textarea id="copy-fallback" readonly hidden aria-label="Texto del cierre para copiar"></textarea>`;
+    ${utilHTML(fecha, sel, 7)}
+    <textarea id="copy-fallback" readonly hidden aria-label="Texto para copiar"></textarea>`;
     return h;
   }
   /* Las tres cifras del cierre: vendido en el día, proyección y lo que hace falta por día */
@@ -917,8 +947,25 @@
         <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label></fieldset>` : ''}
       <div class="tbl-wrap"><table class="ci-table${edit ? ' edit' : ''}"><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>
+      ${edit ? utilEditHTML(fecha, list, diaDe) : ''}
       ${edit ? `${S.cierreErr ? `<p class="err" role="alert">${esc(S.cierreErr)}</p>` : ''}<div class="q-actions"><button type="button" class="btn" id="ci-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ci-save">Guardar y actualizar cierre</button></div>` : ''}
     </section>`;
+  }
+  function utilEditHTML(fecha, list, diaDe) {
+    const rows = list.map(r => {
+      const there = S.avances.get(r.m.id + '__' + fecha), id = esc(r.m.id), dis = canEdit(r.m) ? '' : ' disabled';
+      const cells = UTIL.map(o => {
+        const b = there && there[o.f] != null ? +there[o.f] : null;
+        return `<td data-l="${o.lbl}" class="ut"><input class="qin qty" id="ci-${o.k}-${id}" data-base="${b ?? ''}" inputmode="numeric" autocomplete="off" placeholder="${b != null ? nf0.format(b) : '—'}" aria-label="${o.lbl} vendidos ${diaDe} en ${esc(r.name)}"${dis}></td>`;
+      }).join('');
+      const tot = there && UTIL.some(o => there[o.f] != null) ? money(utTot(there)) : '—';
+      return `<tr><th scope="row" class="l">${esc(r.name)}</th>${cells}<td data-l="Utilidad ${diaDe}" class="ut dtot"><output id="ci-ut-${id}" aria-live="polite">${tot}</output></td></tr>`;
+    }).join('');
+    return `<div class="ut-edit">
+      <h3>Utilidad ${diaDe} <span class="muted">· aparte, no sale en el cierre</span></h3>
+      <p class="muted">Cantidad vendida ${diaDe} de cada cosa. Cada Claro deja ${money(UTIL[0].val)}, cada equipo ${money(UTIL[1].val)} y cada electro ${money(UTIL[2].val)}.</p>
+      <div class="tbl-wrap"><table class="ci-table edit ut-t"><thead><tr><th class="l" scope="col">Local</th>${UTIL.map(o => `<th scope="col" class="ut">${o.lbl}<small>${money(o.val)} c/u</small></th>`).join('')}<th scope="col" class="ut">Utilidad ${diaDe}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
   }
   function saveCierreVentas() {
     const fecha = cierreFecha();
@@ -932,7 +979,8 @@
       const im = el('ci-m-'), iu = el('ci-u-'), ide = el('ci-de-'), idq = el('ci-dq-'), idu = el('ci-du-');
       const v = x => x ? parseNum(x.value) : null;
       const m = v(im), u = v(iu), de = v(ide), dq = v(idq), du = v(idu);
-      if (m == null && u == null && de == null && dq == null && du == null) return;
+      const utIn = UTIL.map(o => el(`ci-${o.k}-`)), utV = utIn.map(v);
+      if (m == null && u == null && de == null && dq == null && du == null && utV.every(x => x == null)) return;
       const id = r.m.id + '__' + fecha, there = S.avances.get(id), base = there || r.M.last;
       // Sin acumulado de este día no se puede proyectar: se pide antes de guardar
       if (!there && m == null && u == null) { faltan.push(r.name); return; }
@@ -947,7 +995,8 @@
         rec.diaMonto = netoDia(rec.diaEfectivo, rec.diaOtros);
       } else ['diaEfectivo', 'diaOtros', 'diaMonto'].forEach(k => { if (there && there[k] != null) rec[k] = there[k]; });
       keep(du, 'diaUnidades');
-      recs.push([id, rec, [im, iu, ide, idq, idu]]);
+      UTIL.forEach((o, i) => keep(utV[i], o.f));
+      recs.push([id, rec, [im, iu, ide, idq, idu, ...utIn]]);
     });
     if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
     recs.forEach(([id, rec, els]) => { els.forEach(x => { if (x) x.dataset.dirty = ''; }); put('avances', id, rec); n++; });
@@ -1121,6 +1170,135 @@
     o.fillText(`proyectadosgeo.vercel.app · generado ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`, P, Hh - 40);
     return out;
   }
+  function utilHTML(fecha, sel, i) {
+    const D = utilData(fecha, sel), t = todayISO(), dTxt = fecha === t ? 'hoy' : `del ${fDow(fecha)}`;
+    const tiles = UTIL.map(o => `<div class="ut-tile"><p class="ut-k">${o.lbl}</p><p class="ut-n">${nf0.format(D.dia[o.f])} <small>× ${money(o.val)}</small></p><p class="ut-v">${money(D.dia[o.f] * o.val)}</p><p class="ut-m">En el mes: ${nf0.format(D.mes[o.f])} · ${money(D.mes[o.f] * o.val)}</p></div>`).join('');
+    const cell = (U, o) => U.dia ? c2(nf0.format(U.dia[o.f]), money(U.dia[o.f] * o.val)) : '—';
+    const body = D.rows.map(({ r, U }) => `<tr><th scope="row" class="l">${esc(r.name)}</th>${UTIL.map(o => `<td data-l="${o.lbl}">${cell(U, o)}</td>`).join('')}<td data-l="Utilidad ${dTxt}"><b>${U.dia ? money(U.diaT) : '<span class="chip warn">sin dato</span>'}</b></td><td data-l="En el mes">${money(U.mesT)}</td></tr>`).join('');
+    const foot = `<tfoot><tr><th scope="row" class="l">Total</th>${UTIL.map(o => `<td data-l="${o.lbl}">${c2(nf0.format(D.dia[o.f]), money(D.dia[o.f] * o.val))}</td>`).join('')}<td data-l="Utilidad ${dTxt}">${money(D.diaT)}</td><td data-l="En el mes">${money(D.mesT)}</td></tr></tfoot>`;
+    return `<section class="glass panel ut-panel rise" style="--i:${i}" aria-labelledby="ut-h">
+      <div class="panel-head"><div><p class="eyebrow">Aparte del cierre</p><h2 id="ut-h">Utilidad ${dTxt}</h2><p>No sale en la imagen ni en el texto del cierre. Se carga en "Cargar ventas del día": Claro deja ${money(UTIL[0].val)}, cada equipo ${money(UTIL[1].val)} y cada electro ${money(UTIL[2].val)}.</p></div></div>
+      <div class="ut-sum">
+        <div class="ut-big"><p class="ut-k">Utilidad ${dTxt}</p><p class="kpi-big">${money(D.diaT)}</p><p class="ut-m">${D.conDia} de ${sel.length} ${sel.length === 1 ? 'local' : 'locales'} con dato · en el mes ${money(D.mesT)}</p></div>
+        ${tiles}
+      </div>
+      <div class="tbl-wrap"><table class="ci-table ut-table"><thead><tr><th class="l" scope="col">Local</th>${UTIL.map(o => `<th scope="col">${o.lbl}</th>`).join('')}<th scope="col">Utilidad ${dTxt}</th><th scope="col">En el mes</th></tr></thead><tbody>${body}</tbody>${foot}</table></div>
+      <div class="ci-actions">
+        <button type="button" class="btn primary lg" id="ut-share">${ICO_SHARE}Enviar imagen de utilidad</button>
+        <button type="button" class="btn lg" id="ut-copy">${ICO_COPY}Copiar texto</button>
+      </div>
+      <div class="ci-img"><img id="ut-img" alt="Vista previa de la utilidad"><p class="muted" id="ut-img-wait">Armando la imagen…</p></div>
+    </section>`;
+  }
+  const utilSel = fecha => cierreRows(fecha).filter(r => r.sel && r.M);
+  function utilText() {
+    const fecha = cierreFecha(), sel = utilSel(fecha);
+    if (!sel.length) return '';
+    const D = utilData(fecha, sel), Dd = parse(fecha), dia = fecha === todayISO() ? 'del día' : `del ${fDow(fecha)}`;
+    const L = [`*Utilidad ${cap(DOW_L[Dd.getDay()])} ${fDM(fecha)}* · ${sel.map(r => r.name).join(', ')}`, ''];
+    L.push(`*Utilidad ${dia}:* ${money(D.diaT)}${D.sinDia.length ? ` _(sin dato: ${D.sinDia.join(', ')})_` : ''}`);
+    UTIL.forEach(o => L.push(`${o.lbl}: ${nf0.format(D.dia[o.f])} · ${money(D.dia[o.f] * o.val)}`));
+    L.push(`*Utilidad del mes:* ${money(D.mesT)}`, '', '*Por local*');
+    D.rows.forEach(({ r, U }) => L.push(`*${r.name}* — ${U.dia ? `${money(U.diaT)} (${UTIL.map(o => `${o.lbl} ${nf0.format(U.dia[o.f])}`).join(' · ')})` : '_sin dato_'} · mes ${money(U.mesT)}`));
+    return L.join('\n');
+  }
+  async function utilCanvas() {
+    const fecha = cierreFecha(), sel = utilSel(fecha);
+    if (!sel.length) return null;
+    const D = utilData(fecha, sel);
+    try { if (document.fonts) await document.fonts.ready; } catch (e) { }
+    const logo = await getLogo();
+    const W = 1080, P = 60, rowH = 160, top = 250;
+    const c = document.createElement('canvas'); c.width = W; c.height = 1400 + D.rows.length * rowH;
+    const x = c.getContext('2d');
+    const F = (w, s) => `${w} ${s}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
+    const glass = (X, Y, w, h, r, hi) => { rr(X, Y, w, h, r); const g = x.createLinearGradient(X, Y, X + w, Y + h); g.addColorStop(0, hi ? 'rgba(56,189,248,0.26)' : 'rgba(255,255,255,0.10)'); g.addColorStop(1, hi ? 'rgba(56,189,248,0.06)' : 'rgba(255,255,255,0.03)'); x.fillStyle = g; x.fill(); x.lineWidth = 2; x.strokeStyle = hi ? 'rgba(125,211,252,0.55)' : 'rgba(255,255,255,0.16)'; x.stroke(); };
+    const fit = (s, maxW) => { if (x.measureText(s).width <= maxW) return s; while (s.length > 1 && x.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; };
+    const txt = (s, X, Y, font, col, align) => { x.font = font; x.fillStyle = col; x.textAlign = align || 'left'; x.fillText(s, X, Y); x.textAlign = 'left'; };
+    const Dd = parse(fecha), esHoy = fecha === todayISO();
+    if (logo) { x.save(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, 66, 92, 92); x.restore(); x.beginPath(); x.arc(P + 46, 112, 46, 0, Math.PI * 2); x.lineWidth = 3; x.strokeStyle = 'rgba(255,255,255,0.85)'; x.stroke(); }
+    const tx = P + (logo ? 120 : 0);
+    txt('UTILIDAD · GEO', tx, 96, F(800, 24), '#7dd3fc');
+    x.font = F(800, 50); txt(fit(`${cap(DOW_L[Dd.getDay()])} ${Dd.getDate()} de ${MESES[Dd.getMonth()]}`, W - tx - P), tx, 150, F(800, 50), '#ffffff');
+    txt(`${sel.length} ${sel.length === 1 ? 'local' : 'locales'} · ${D.conDia} con dato del día`, P, 214, F(500, 26), 'rgba(219,234,254,0.78)');
+    // Total
+    const ix = P + 44, iw = W - 2 * P - 88, totH = 200 + UTIL.length * 58 + 90;
+    let y = top; glass(P, y, W - 2 * P, totH, 40, true);
+    txt(esHoy ? 'UTILIDAD DEL DÍA' : `UTILIDAD DEL ${fDow(fecha).toUpperCase()}`, ix, y + 58, F(800, 22), '#7dd3fc');
+    txt(money(D.diaT), ix, y + 146, F(900, 78), '#ffffff');
+    let yy = y + 196;
+    x.fillStyle = 'rgba(186,230,253,0.22)'; x.fillRect(ix, yy - 22, iw, 2);
+    UTIL.forEach(o => {
+      txt(o.lbl, ix, yy + 22, F(700, 28), '#e0f2fe');
+      txt(`${nf0.format(D.dia[o.f])} × ${money(o.val)}`, ix + 250, yy + 22, F(600, 25), 'rgba(219,234,254,0.75)');
+      txt(money(D.dia[o.f] * o.val), ix + iw, yy + 22, F(800, 30), '#ffffff', 'right');
+      yy += 58;
+    });
+    x.fillStyle = 'rgba(186,230,253,0.22)'; x.fillRect(ix, yy - 10, iw, 2);
+    txt('Utilidad del mes', ix, yy + 40, F(700, 26), 'rgba(219,234,254,0.9)');
+    txt(money(D.mesT), ix + iw, yy + 40, F(900, 32), '#7dd3fc', 'right');
+    // Locales
+    y = top + totH + 40;
+    D.rows.forEach(({ r, U }) => {
+      glass(P, y, W - 2 * P, rowH - 18, 30, false);
+      const rx = P + 34, rw = W - 2 * P - 68;
+      const vs = U.dia ? money(U.diaT) : 'sin dato';
+      x.font = F(900, 36); const vw = x.measureText(vs).width;
+      txt(vs, rx + rw, y + 54, F(900, 36), U.dia ? '#ffffff' : '#fcd34d', 'right');
+      x.font = F(800, 32); txt(fit(r.name, rw - vw - 30), rx, y + 54, F(800, 32), '#ffffff');
+      x.font = F(600, 23);
+      txt(fit(U.dia ? UTIL.map(o => `${o.lbl} ${nf0.format(U.dia[o.f])}`).join('  ·  ') : 'Sin cantidades cargadas para este día', rw - 260), rx, y + 98, F(600, 23), U.dia ? 'rgba(219,234,254,0.85)' : '#fcd34d');
+      txt(`Mes ${money(U.mesT)}`, rx + rw, y + 98, F(700, 23), '#7dd3fc', 'right');
+      y += rowH;
+    });
+    const Hh = y + 70;
+    const out = document.createElement('canvas'); out.width = W; out.height = Hh;
+    const o = out.getContext('2d');
+    const bg = o.createLinearGradient(0, 0, 0, Hh); bg.addColorStop(0, '#0b2a5c'); bg.addColorStop(0.5, '#061a3a'); bg.addColorStop(1, '#030c1a');
+    o.fillStyle = bg; o.fillRect(0, 0, W, Hh);
+    const glow = (cx, cy, rad, col) => { const g = o.createRadialGradient(cx, cy, 0, cx, cy, rad); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); o.fillStyle = g; o.fillRect(0, 0, W, Hh); };
+    glow(W - 60, 40, 560, 'rgba(249,115,22,0.26)'); glow(40, Hh - 40, 700, 'rgba(56,160,248,0.26)');
+    o.drawImage(c, 0, 0);
+    const now = new Date();
+    o.fillStyle = 'rgba(219,234,254,0.55)'; o.font = F(500, 22);
+    o.fillText(`proyectadosgeo.vercel.app · generado ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`, P, Hh - 40);
+    return out;
+  }
+  const UT = { url: null, blob: null, name: '', sig: '', t: null };
+  const utilSig = () => { const f = cierreFecha(); return f + '|' + S.rev + '|' + utilSel(f).map(r => r.key + ':' + UTIL.map(o => r.M.av.map(a => a.fecha + '=' + (a[o.f] ?? '')).join(';')).join('/')).join(','); };
+  function scheduleUtilImage() {
+    clearTimeout(UT.t);
+    UT.t = setTimeout(async () => {
+      if (S.view !== 'cierre' || !$('#ut-img')) return;
+      const sig = utilSig(), gen = UT.gen = (UT.gen || 0) + 1;
+      if (!(sig === UT.sig && UT.url)) {
+        const c = await utilCanvas(); if (!c || gen !== UT.gen) return;
+        const blob = await new Promise(res => c.toBlob(res, 'image/png')); if (!blob || gen !== UT.gen) return;
+        if (UT.url) URL.revokeObjectURL(UT.url);
+        UT.blob = blob; UT.url = URL.createObjectURL(blob); UT.sig = sig; UT.name = `utilidad-geo-${cierreFecha()}.png`;
+      }
+      const im = $('#ut-img'), wt = $('#ut-img-wait');
+      if (im) { im.src = UT.url; im.hidden = false; }
+      if (wt) wt.hidden = true;
+    }, 200);
+  }
+  async function shareUtil() {
+    if (!UT.blob || UT.sig !== utilSig()) { toast('Un segundo, estoy armando la imagen…'); scheduleUtilImage(); return; }
+    const file = new File([UT.blob], UT.name, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Utilidad del día' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a'); a.href = UT.url; a.download = UT.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Imagen descargada');
+  }
+  async function copyUtil() {
+    const text = utilText(), fb = $('#copy-fallback');
+    try { await navigator.clipboard.writeText(text); toast('Texto de utilidad copiado'); }
+    catch (e) { if (fb) { fb.hidden = false; fb.value = text; fb.focus(); fb.select(); } toast('Seleccioná el texto y copialo'); }
+  }
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
@@ -1130,13 +1308,13 @@
     clearTimeout(CI.t);
     CI.t = setTimeout(async () => {
       if (S.view !== 'cierre') return;
-      const sig = cierreSig();
+      const sig = cierreSig(), gen = CI.gen = (CI.gen || 0) + 1;
       const img = $('#ci-img'), wait = $('#ci-img-wait');
       if (sig === CI.sig && CI.url) { if (img) { img.src = CI.url; img.hidden = false; } if (wait) wait.hidden = true; return; }
       const c = await cierreCanvas();
-      if (!c) return;
+      if (!c || gen !== CI.gen) return;
       const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-      if (!blob) return;
+      if (!blob || gen !== CI.gen) return;
       if (CI.url) URL.revokeObjectURL(CI.url);
       CI.blob = blob; CI.url = URL.createObjectURL(blob); CI.sig = sig; CI.name = `cierre-geo-${cierreFecha()}.png`;
       const im = $('#ci-img'), wt = $('#ci-img-wait');
@@ -1235,10 +1413,11 @@
       S.enterNow = enter;
       main.classList.toggle('enter', enter);
       main.innerHTML = mainHTML();
-      if (S.view === 'cierre') scheduleCierreImage();
+      if (S.view === 'cierre') { scheduleCierreImage(); scheduleUtilImage(); }
       drawChart(S.draw && S.loaded);
       Object.entries(dirty).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dataset.dirty = '1'; } });
       main.querySelectorAll('output[id^="ci-dt-"]').forEach(o => updDiaTot(o.id.slice(6)));
+      main.querySelectorAll('output[id^="ci-ut-"]').forEach(o => updUtTot(o.id.slice(6)));
       if (focus) { const el = document.getElementById(focus.id); if (el && !el.disabled) { el.focus({ preventScroll: true }); try { el.setSelectionRange(focus.a, focus.b); } catch (e) { } } }
       if (S.loaded) {
         animateNumbers();
@@ -1324,7 +1503,7 @@
     S.bump = true; S.draw = true;
     const prevA = S.avances.get(id);
     put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString(),
-      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros'].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
+      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros', ...UTIL.map(o => o.f)].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
     if (lastModel && done(lastModel) && !wasDone) { confetti(); toast('¡Objetivo cumplido!'); }
     else toast('Listo, recalculado');
   }
@@ -1384,6 +1563,7 @@
     if (el.type !== 'radio' && el.type !== 'date') el.dataset.dirty = '1';
     if (el.matches('[inputmode="decimal"], [inputmode="numeric"]')) liveFormat(el);
     if (/^ci-d[eq]-/.test(el.id)) updDiaTot(el.id.slice(6));
+    if (/^ci-u[cex]-/.test(el.id)) updUtTot(el.id.slice(6));
   });
   main.addEventListener('change', e => {
     const el = e.target;
@@ -1395,7 +1575,7 @@
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
-    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;
@@ -1408,6 +1588,8 @@
     if (t.dataset.csel) { const all = t.dataset.csel === 'all'; cierreRows(cierreFecha()).forEach(r => { if (!r.locked) CP.sel[r.key] = all; }); saveCierre(); render(); return; }
     if (t.id === 'ci-share') { shareCierre(); return; }
     if (t.id === 'ci-copy') { copyCierre(); return; }
+    if (t.id === 'ut-share') { shareUtil(); return; }
+    if (t.id === 'ut-copy') { copyUtil(); return; }
     if (t.id === 'ci-edit') { S.cierreEdit = !S.cierreEdit; S.cierreErr = ''; S.cierreEstado = null; render(); if (S.cierreEdit) { const f = main.querySelector('.ci-table input:not([disabled])'); if (f) f.focus(); } return; }
     if (t.id === 'ci-cancel') { S.cierreEdit = false; S.cierreErr = ''; main.querySelectorAll('[id^="ci-"]').forEach(el => { el.dataset.dirty = ''; }); render(); return; }
     if (t.id === 'ci-save') { saveCierreVentas(); return; }
