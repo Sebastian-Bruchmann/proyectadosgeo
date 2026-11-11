@@ -12,7 +12,7 @@ Publicada en **https://proyectadosgeo.vercel.app**
   - proyección al cierre = vendido ÷ días hábiles transcurridos × días hábiles totales,
   - lo que falta por día y por semana para llegar al 100 %.
 - Menú de tres rayas con todos los objetivos (en curso, próximos y terminados).
-- **Servicios financieros** (en el cierre): operaciones del día en efectivo ($ 2.000 c/u) y con tarjeta/otros ($ 1.935,60 c/u), con el monto total.
+- **Servicios financieros** (en el cierre): accesorios vendidos en el día × $ 1.967, con el monto total.
 - **Utilidad** (aparte del cierre): se carga cuántos Claro, equipos y electros vendió cada local en el día y se calcula lo que dejan (Claro $ 34.388, equipo $ 85.900, electro $ 13.856), con su propia imagen y texto.
 - Contraseña opcional por objetivo: "ver y editar" o "solo editar". La valida el servidor.
 - Resumen para copiar a WhatsApp y descarga del plan en CSV.

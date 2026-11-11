@@ -66,8 +66,8 @@ function cleanAvance(b) {
   // Desglose del día: efectivo y tarjeta/QR/otros (sin descontar; diaMonto ya trae el neto)
   if (typeof b.diaEfectivo === 'number' && isFinite(b.diaEfectivo)) out.diaEfectivo = num(b.diaEfectivo);
   if (typeof b.diaOtros === 'number' && isFinite(b.diaOtros)) out.diaOtros = num(b.diaOtros);
-  // Utilidad (aparte del cierre): cantidades del día de Claro, equipos y electros; y Servicios financieros: operaciones en efectivo y con tarjeta/otros
-  for (const k of ['utClaro', 'utEquipos', 'utElectros', 'sfEfe', 'sfOtr']) if (typeof b[k] === 'number' && isFinite(b[k])) out[k] = num(b[k]);
+  // Utilidad (aparte del cierre): cantidades del día de Claro, equipos y electros; y Servicios financieros: accesorios vendidos (sfEfe/sfOtr quedan por datos viejos)
+  for (const k of ['utClaro', 'utEquipos', 'utElectros', 'sfAcc', 'sfEfe', 'sfOtr']) if (typeof b[k] === 'number' && isFinite(b[k])) out[k] = num(b[k]);
   return out;
 }
 

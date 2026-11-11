@@ -709,28 +709,23 @@
   ];
   const utTot = q => UTIL.reduce((a, o) => a + (+q[o.f] || 0) * o.val, 0);
   /* Servicios financieros: lo que se cobra por cada operación vendida, según cómo se pagó */
-  const SF = [
-    { f: 'sfEfe', k: 'se', lbl: 'Efectivo', val: 2000 },
-    { f: 'sfOtr', k: 'so', lbl: 'Tarjeta / otros', val: 1935.6 },
-  ];
-  const sfMonto = q => SF.reduce((a, o) => a + (+q[o.f] || 0) * o.val, 0);
-  const sfCant = q => SF.reduce((a, o) => a + (+q[o.f] || 0), 0);
+  // Un solo valor: cada accesorio vendido suma $ 1.967 (las cargas viejas en efectivo/tarjeta se cuentan como accesorios)
+  const SF = [{ f: 'sfAcc', k: 'sa', lbl: 'Accesorios', val: 1967 }];
+  const sfCant = q => q ? (q.sfAcc != null ? +q.sfAcc || 0 : (q.sfEfe != null || q.sfOtr != null) ? (+q.sfEfe || 0) + (+q.sfOtr || 0) : 0) : 0;
+  const sfHas = q => !!q && (q.sfAcc != null || q.sfEfe != null || q.sfOtr != null);
+  const sfMonto = q => sfCant(q) * SF[0].val;
   // Pesos con centavos solo cuando hacen falta ($ 5.806,80)
   const moneyC = n => { const c = Math.round((+n || 0) * 100); return c % 100 ? `$ ${nf0.format(Math.trunc(c / 100))},${String(Math.abs(c % 100)).padStart(2, '0')}` : money(c / 100); };
   function sfOf(M, fecha) {
     const cur = M.av.find(a => a.fecha === fecha);
-    return cur && SF.some(o => cur[o.f] != null) ? { e: +cur.sfEfe || 0, o: +cur.sfOtr || 0, n: sfCant(cur), m: sfMonto(cur) } : null;
+    return sfHas(cur) ? { n: sfCant(cur), m: sfMonto(cur) } : null;
   }
-  const sfTxt = q => `${nf0.format(q.n)} ${q.n === 1 ? 'operación' : 'operaciones'} · ${nf0.format(q.e)} efectivo · ${nf0.format(q.o)} tarjeta/otros`;
+  const sfTxt = q => `${nf0.format(q.n)} ${q.n === 1 ? 'accesorio' : 'accesorios'} × ${moneyC(SF[0].val)}`;
   function updSfTot(id) {
     const o = document.getElementById('ci-sf-' + id); if (!o) return;
-    const q = {}; let any = false;
-    SF.forEach(u => {
-      const el = document.getElementById(`ci-${u.k}-${id}`); if (!el) return;
-      const t = parseNum(el.value), v = t != null ? t : (el.dataset.base !== '' ? +el.dataset.base : null);
-      if (v != null) any = true; q[u.f] = v || 0;
-    });
-    o.textContent = any ? `${moneyC(sfMonto(q))} · ${nf0.format(sfCant(q))} op` : '—';
+    const el = document.getElementById('ci-sa-' + id); if (!el) return;
+    const t = parseNum(el.value), v = t != null ? t : (el.dataset.base !== '' ? +el.dataset.base : null);
+    o.textContent = v != null ? `${moneyC(v * SF[0].val)} · ${nf0.format(v)} acc.` : '—';
   }
   function utilOf(M, fecha) {
     const cur = M.av.find(a => a.fecha === fecha);
@@ -784,7 +779,7 @@
       ritmoM: sum(M => M.ritmoM), ritmoU: sum(M => M.ritmoU),
       hoyN: conHoy.length, hoyM: conHoy.reduce((x, r) => x + r.hoy.m, 0), hoyU: conHoy.reduce((x, r) => x + r.hoy.u, 0),
       hoyGap: conHoy.filter(r => r.hoy.desde).length, sinHoy: R.filter(r => !r.hoy),
-      sf: R.some(r => r.sf) ? R.filter(r => r.sf).reduce((a, r) => ({ e: a.e + r.sf.e, o: a.o + r.sf.o, n: a.n + r.sf.n, m: a.m + r.sf.m }), { e: 0, o: 0, n: 0, m: 0 }) : null,
+      sf: R.some(r => r.sf) ? R.filter(r => r.sf).reduce((a, r) => ({ n: a.n + r.sf.n, m: a.m + r.sf.m }), { n: 0, m: 0 }) : null,
       firstOpen: fo[0] || null, mes: Ms.every(M => M.meta.tipo === 'mes'),
       unidad: Ms[0].unidad,
     };
@@ -867,7 +862,7 @@
       <dl class="meter-foot">
         ${T.objM ? `<div><dt>Acumulado ${per}</dt><dd>${money(T.vendM)} <small>${pct(T.pM)}</small></dd></div>` : ''}
         ${T.objU ? `<div><dt>${esc(T.unidad)} ${per}</dt><dd>${uSmart(T.vendU)} <small>${pct(T.pU)}</small></dd></div>` : ''}
-        ${T.sf ? `<div><dt>Servicios financieros</dt><dd>${moneyC(T.sf.m)} <small>${nf0.format(T.sf.n)} op</small></dd></div>` : ''}
+        ${T.sf ? `<div><dt>Servicios financieros</dt><dd>${moneyC(T.sf.m)} <small>${nf0.format(T.sf.n)} acc.</small></dd></div>` : ''}
       </dl>
     </article>`;
     const st = stTot(T), fill = T.proyP == null ? 0 : Math.min(1, Math.max(0, T.proyP)) * 100;
@@ -981,16 +976,14 @@
   function sfEditHTML(fecha, list, diaDe) {
     const rows = list.map(r => {
       const there = S.avances.get(r.m.id + '__' + fecha), id = esc(r.m.id), dis = canEdit(r.m) ? '' : ' disabled';
-      const cells = SF.map(o => {
-        const b = there && there[o.f] != null ? +there[o.f] : null;
-        return `<td data-l="${o.lbl} (op)" class="sf"><input class="qin qty" id="ci-${o.k}-${id}" data-base="${b ?? ''}" inputmode="numeric" autocomplete="off" placeholder="${b != null ? nf0.format(b) : '—'}" aria-label="Operaciones de servicios financieros en ${o.lbl.toLowerCase()} ${diaDe} en ${esc(r.name)}"${dis}></td>`;
-      }).join('');
-      const tot = there && SF.some(o => there[o.f] != null) ? `${moneyC(sfMonto(there))} · ${nf0.format(sfCant(there))} op` : '—';
+      const b = sfHas(there) ? sfCant(there) : null;
+      const cells = `<td data-l="Accesorios" class="sf"><input class="qin qty" id="ci-sa-${id}" data-base="${b ?? ''}" inputmode="numeric" autocomplete="off" placeholder="${b != null ? nf0.format(b) : '—'}" aria-label="Accesorios vendidos ${diaDe} en ${esc(r.name)} (servicios financieros)"${dis}></td>`;
+      const tot = b != null ? `${moneyC(b * SF[0].val)} · ${nf0.format(b)} acc.` : '—';
       return `<tr><th scope="row" class="l">${esc(r.name)}</th>${cells}<td data-l="Servicios financieros" class="sf dtot"><output id="ci-sf-${id}" aria-live="polite">${tot}</output></td></tr>`;
     }).join('');
     return `<div class="ut-edit sf-edit">
       <h3>Servicios financieros ${diaDe} <span class="muted">· sale en el cierre</span></h3>
-      <p class="muted">Cuántas operaciones se vendieron ${diaDe} y cómo se pagaron. Cada una en efectivo suma ${moneyC(SF[0].val)} y cada una con tarjeta, QR u otro medio suma ${moneyC(SF[1].val)}.</p>
+      <p class="muted">Cuántos accesorios se vendieron ${diaDe}. Cada uno suma ${moneyC(SF[0].val)}.</p>
       <div class="tbl-wrap"><table class="ci-table edit sf-t"><thead><tr><th class="l" scope="col">Local</th>${SF.map(o => `<th scope="col" class="sf">${o.lbl}<small>${moneyC(o.val)} c/u</small></th>`).join('')}<th scope="col" class="sf">Total ${diaDe}</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   }
@@ -1040,7 +1033,7 @@
       } else ['diaEfectivo', 'diaOtros', 'diaMonto'].forEach(k => { if (there && there[k] != null) rec[k] = there[k]; });
       keep(du, 'diaUnidades');
       UTIL.forEach((o, i) => keep(utV[i], o.f));
-      SF.forEach((o, i) => keep(sfV[i], o.f));
+      if (sfV[0] != null) rec.sfAcc = Math.max(0, Math.round(sfV[0])); else if (sfHas(there)) rec.sfAcc = sfCant(there);
       recs.push([id, rec, [im, iu, ide, idq, idu, ...utIn, ...sfIn]]);
     });
     if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
@@ -1466,7 +1459,7 @@
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.e + '/' + r.sf.o : '-') : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.n : '-') : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);
@@ -1668,7 +1661,7 @@
     S.bump = true; S.draw = true;
     const prevA = S.avances.get(id);
     put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString(),
-      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros', ...UTIL.map(o => o.f), ...SF.map(o => o.f)].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
+      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros', ...UTIL.map(o => o.f), 'sfAcc', 'sfEfe', 'sfOtr'].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
     if (lastModel && done(lastModel) && !wasDone) { confetti(); toast('¡Objetivo cumplido!'); }
     else toast('Listo, recalculado');
   }
@@ -1729,7 +1722,7 @@
     if (el.matches('[inputmode="decimal"], [inputmode="numeric"]')) liveFormat(el);
     if (/^ci-d[eq]-/.test(el.id)) updDiaTot(el.id.slice(6));
     if (/^ci-u[cex]-/.test(el.id)) updUtTot(el.id.slice(6));
-    if (/^ci-s[eo]-/.test(el.id)) updSfTot(el.id.slice(6));
+    if (/^ci-sa-/.test(el.id)) updSfTot(el.id.slice(6));
   });
   main.addEventListener('change', e => {
     const el = e.target;
@@ -1741,7 +1734,7 @@
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
-    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux|se|so)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux|sa)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;
