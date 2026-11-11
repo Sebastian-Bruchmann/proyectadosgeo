@@ -1212,7 +1212,10 @@
     //  en el medio (dorado): la suma
     const avgUt = Ms => { let ut = 0, n = 0; Ms.forEach(M => M.av.forEach(a => { if (UTIL.some(o => a[o.f] != null)) { ut += utTot(a); n += UTIL.reduce((q, o) => q + (+a[o.f] || 0), 0); } })); return n ? ut / n : null; };
     const avgG = avgUt(sel.map(r => r.M));
-    const pUtOp = avgG == null || !T.objU || T.proyU == null ? null : Math.round(T.proyU * avgG);
+    // Por local: Op proyectadas × utilidad promedio por operación de ese local (si todavía no cargó, el promedio general).
+    // El total es la suma de los locales, así todo cierra.
+    const pUtOpOf = M => { if (!M.objU || avgG == null) return null; const a = avgUt([M]) ?? avgG; return Math.round((M.proyU != null ? M.proyU : M.vendU) * a); };
+    const pUtOp = avgG == null || !T.objU ? null : sel.reduce((acc, r) => acc + (pUtOpOf(r.M) || 0), 0);
     const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
     const totP = p75P != null && pUtOp != null ? p75P + pUtOp : null;
     const utLine = pc != null && (p75P != null || pUtOp != null);
@@ -1295,7 +1298,12 @@
       if (M.objM) pItems.push({ lbl: 'ACC', main: money(M.proyM != null ? M.proyM : M.vendM), sub2: null, p: M.proyM != null ? M.proyM / M.objM : M.pM });
       if (M.objU) pItems.push({ lbl: oL, main: nf0.format(M.proyU != null ? M.proyU : M.vendU), sub2: U(M.proyU != null ? M.proyU : M.vendU), p: M.proyU != null ? M.proyU / M.objU : M.pU });
       pItems.forEach((o, k) => proyRow(colX(k), cy + 30, colW, o.lbl, o.main, o.sub2, o.p, 38));
-      cy += 30 + proyGeo(38).h + 12; lsep(cy); cy += 20;
+      cy += 30 + proyGeo(38).h + 12;
+      // Utilidad proyectada del local: 75 % del Acc proyectado · total (dorado) · Op proyectadas × promedio
+      const p75PL = M.objM && M.started ? Math.round((M.proyM != null ? M.proyM : M.vendM) * 0.75) : null;
+      const uOpL = M.started ? pUtOpOf(M) : null;
+      if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
+      lsep(cy); cy += 20;
       // Para llegar al 100 %
       SL('PARA LLEGAR AL 100 %', cy + 20);
       if (done(M) || !M.habRest) {
