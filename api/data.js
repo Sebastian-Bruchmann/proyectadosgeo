@@ -212,6 +212,26 @@ async function accion(req, b, llaves) {
   return [400, { error: 'Acción desconocida' }];
 }
 
+/* Reparación única (11/11/2026): cargas guardadas por error con acumulado 0. Solo toca esos registros y solo si siguen en 0. Se saca después de usarla. */
+const REPARAR = 'r7k2-20261111';
+async function reparar() {
+  const [a] = await redis([['HGETALL', K.avances]]);
+  const av = hashToObj(a), now = new Date().toISOString(), writes = [], hecho = [];
+  for (const m of ['mmw59fkyfxdyj', 'mmw59yuei87bt', 'mmw59ujay5lwa', 'mmw59mhtjw149']) {
+    const id = m + '__2026-11-10', r = av[id];
+    if (r && +r.monto === 0 && +r.unidades === 0) { writes.push(['HDEL', K.avances, id]); hecho.push('borrado ' + id); }
+  }
+  const r9 = 'mmw5a21q03va3__2026-11-10';
+  if (av[r9] && +av[r9].monto === 0) { writes.push(['HSET', K.avances, r9, JSON.stringify({ ...av[r9], monto: 1516000, unidades: 12, actualizado: now })]); hecho.push('acumulado ' + r9); }
+  const d8 = { mmw59fkyfxdyj: [3402500, 6], mmw59yuei87bt: [3478000, 10], mmw59ujay5lwa: [2039500, 6], mmw59mhtjw149: [3954000, 11] };
+  for (const [m, [mo, un]] of Object.entries(d8)) {
+    const id = m + '__2026-11-08', r = av[id];
+    if (r && +r.monto === 0) { writes.push(['HSET', K.avances, id, JSON.stringify({ ...r, monto: mo, unidades: un, actualizado: now })]); hecho.push('acumulado ' + id); }
+  }
+  if (writes.length) await redis([...writes, ['INCR', K.rev]]);
+  return hecho;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const url = new URL(req.url || '/', 'http://local');
@@ -221,6 +241,7 @@ export default async function handler(req, res) {
   }
   try {
     if (req.method === 'GET') {
+      if (url.searchParams.get('reparar') === REPARAR) return res.status(200).json({ hecho: await reparar() });
       const llaves = leerLlaves(req.headers['x-llaves'] || url.searchParams.get('llaves'));
       const rev = url.searchParams.get('rev');
       if (rev != null && /^\d+$/.test(rev)) {

@@ -1009,7 +1009,7 @@
     const cerrado = !!($('#ci-cerrado') && $('#ci-cerrado').checked);
     const now = new Date().toISOString();
     let n = 0;
-    const faltan = [], recs = [];
+    const faltan = [], bajos = [], recs = [];
     rows.forEach(r => {
       const el = k => document.getElementById(k + r.m.id);
       const im = el('ci-m-'), iu = el('ci-u-'), ide = el('ci-de-'), idq = el('ci-dq-'), idu = el('ci-du-');
@@ -1021,6 +1021,12 @@
       const id = r.m.id + '__' + fecha, there = S.avances.get(id), base = there || r.M.last;
       // Sin acumulado de este día no se puede proyectar: se pide antes de guardar
       if (!there && m == null && u == null) { faltan.push(r.name); return; }
+      // El acumulado del mes nunca baja: si es menor que el del día anterior cargado, es un error de tipeo
+      const prevs = r.M.av.filter(a => a.fecha < fecha), prev = prevs[prevs.length - 1];
+      if (prev && ((m != null && m < (+prev.monto || 0)) || (u != null && u < (+prev.unidades || 0)))) {
+        bajos.push(`${r.name} (${m != null && m < (+prev.monto || 0) ? `${money(m)} cuando el ${fDM(prev.fecha)} ya llevaba ${money(+prev.monto || 0)}` : `${nf0.format(u)} ${uName(r.M.unidad, u)} cuando el ${fDM(prev.fecha)} ya llevaba ${nf0.format(+prev.unidades || 0)}`})`);
+        return;
+      }
       const rec = { metaId: r.m.id, fecha, cerrado, actualizado: now,
         monto: Math.max(0, Math.round(m != null ? m : base ? +base.monto || 0 : 0)),
         unidades: Math.max(0, Math.round(u != null ? u : base ? +base.unidades || 0 : 0)) };
@@ -1036,6 +1042,7 @@
       if (sfV[0] != null) rec.sfAcc = Math.max(0, Math.round(sfV[0])); else if (sfHas(there)) rec.sfAcc = sfCant(there);
       recs.push([id, rec, [im, iu, ide, idq, idu, ...utIn, ...sfIn]]);
     });
+    if (bajos.length) { S.cierreErr = `El acumulado del mes no puede bajar: ${bajos.join('; ')}. Revisalo (es todo lo vendido en el mes, no lo del día) o dejalo vacío para no tocarlo.`; render(); return; }
     if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
     recs.forEach(([id, rec, els]) => { els.forEach(x => { if (x) x.dataset.dirty = ''; }); put('avances', id, rec); n++; });
     if (!n) { S.cierreErr = 'Escribí al menos un monto o una cantidad.'; render(); return; }
