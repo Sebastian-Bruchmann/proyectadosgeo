@@ -682,7 +682,7 @@
     return sortedMetas().filter(m => m.desde <= fecha && fecha <= m.hasta).map(m => {
       const name = localName(m), key = nrm(name), locked = hidden(m);
       const M = locked ? null : buildModel(m, fecha, true);
-      return { m, name, key, locked, M, hoy: M ? hoyOf(M, fecha) : null, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
+      return { m, name, key, locked, M, hoy: M ? hoyOf(M, fecha) : null, sf: M ? sfOf(M, fecha) : null, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
     }).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   }
   /* % proyectado al cierre del período */
@@ -708,6 +708,30 @@
     { f: 'utElectros', k: 'ux', lbl: 'Electros', val: 13856 },
   ];
   const utTot = q => UTIL.reduce((a, o) => a + (+q[o.f] || 0) * o.val, 0);
+  /* Servicios financieros: lo que se cobra por cada operación vendida, según cómo se pagó */
+  const SF = [
+    { f: 'sfEfe', k: 'se', lbl: 'Efectivo', val: 2000 },
+    { f: 'sfOtr', k: 'so', lbl: 'Tarjeta / otros', val: 1935.6 },
+  ];
+  const sfMonto = q => SF.reduce((a, o) => a + (+q[o.f] || 0) * o.val, 0);
+  const sfCant = q => SF.reduce((a, o) => a + (+q[o.f] || 0), 0);
+  // Pesos con centavos solo cuando hacen falta ($ 5.806,80)
+  const moneyC = n => { const c = Math.round((+n || 0) * 100); return c % 100 ? `$ ${nf0.format(Math.trunc(c / 100))},${String(Math.abs(c % 100)).padStart(2, '0')}` : money(c / 100); };
+  function sfOf(M, fecha) {
+    const cur = M.av.find(a => a.fecha === fecha);
+    return cur && SF.some(o => cur[o.f] != null) ? { e: +cur.sfEfe || 0, o: +cur.sfOtr || 0, n: sfCant(cur), m: sfMonto(cur) } : null;
+  }
+  const sfTxt = q => `${nf0.format(q.n)} ${q.n === 1 ? 'operación' : 'operaciones'} · ${nf0.format(q.e)} efectivo · ${nf0.format(q.o)} tarjeta/otros`;
+  function updSfTot(id) {
+    const o = document.getElementById('ci-sf-' + id); if (!o) return;
+    const q = {}; let any = false;
+    SF.forEach(u => {
+      const el = document.getElementById(`ci-${u.k}-${id}`); if (!el) return;
+      const t = parseNum(el.value), v = t != null ? t : (el.dataset.base !== '' ? +el.dataset.base : null);
+      if (v != null) any = true; q[u.f] = v || 0;
+    });
+    o.textContent = any ? `${moneyC(sfMonto(q))} · ${nf0.format(sfCant(q))} op` : '—';
+  }
   function utilOf(M, fecha) {
     const cur = M.av.find(a => a.fecha === fecha);
     const dia = cur && UTIL.some(o => cur[o.f] != null) ? Object.fromEntries(UTIL.map(o => [o.f, +cur[o.f] || 0])) : null;
@@ -760,6 +784,7 @@
       ritmoM: sum(M => M.ritmoM), ritmoU: sum(M => M.ritmoU),
       hoyN: conHoy.length, hoyM: conHoy.reduce((x, r) => x + r.hoy.m, 0), hoyU: conHoy.reduce((x, r) => x + r.hoy.u, 0),
       hoyGap: conHoy.filter(r => r.hoy.desde).length, sinHoy: R.filter(r => !r.hoy),
+      sf: R.some(r => r.sf) ? R.filter(r => r.sf).reduce((a, r) => ({ e: a.e + r.sf.e, o: a.o + r.sf.o, n: a.n + r.sf.n, m: a.m + r.sf.m }), { e: 0, o: 0, n: 0, m: 0 }) : null,
       firstOpen: fo[0] || null, mes: Ms.every(M => M.meta.tipo === 'mes'),
       unidad: Ms[0].unidad,
     };
@@ -842,6 +867,7 @@
       <dl class="meter-foot">
         ${T.objM ? `<div><dt>Acumulado ${per}</dt><dd>${money(T.vendM)} <small>${pct(T.pM)}</small></dd></div>` : ''}
         ${T.objU ? `<div><dt>${esc(T.unidad)} ${per}</dt><dd>${uSmart(T.vendU)} <small>${pct(T.pU)}</small></dd></div>` : ''}
+        ${T.sf ? `<div><dt>Servicios financieros</dt><dd>${moneyC(T.sf.m)} <small>${nf0.format(T.sf.n)} op</small></dd></div>` : ''}
       </dl>
     </article>`;
     const st = stTot(T), fill = T.proyP == null ? 0 : Math.min(1, Math.max(0, T.proyP)) * 100;
@@ -947,9 +973,26 @@
         <label class="opt"><input type="radio" name="ci-estado" id="ci-cerrado" value="cerrado"${cerrado ? ' checked' : ''}><span>Sí, ${diaTxt} ya cerró</span></label>
         <label class="opt"><input type="radio" name="ci-estado" id="ci-abierto" value="abierto"${cerrado ? '' : ' checked'}><span>No, ${diaTxt} todavía se vende</span></label></fieldset>` : ''}
       <div class="tbl-wrap"><table class="ci-table${edit ? ' edit' : ''}"><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>
+      ${edit ? sfEditHTML(fecha, list, diaDe) : ''}
       ${edit ? utilEditHTML(fecha, list, diaDe) : ''}
       ${edit ? `${S.cierreErr ? `<p class="err" role="alert">${esc(S.cierreErr)}</p>` : ''}<div class="q-actions"><button type="button" class="btn" id="ci-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ci-save">Guardar y actualizar cierre</button></div>` : ''}
     </section>`;
+  }
+  function sfEditHTML(fecha, list, diaDe) {
+    const rows = list.map(r => {
+      const there = S.avances.get(r.m.id + '__' + fecha), id = esc(r.m.id), dis = canEdit(r.m) ? '' : ' disabled';
+      const cells = SF.map(o => {
+        const b = there && there[o.f] != null ? +there[o.f] : null;
+        return `<td data-l="${o.lbl} (op)" class="sf"><input class="qin qty" id="ci-${o.k}-${id}" data-base="${b ?? ''}" inputmode="numeric" autocomplete="off" placeholder="${b != null ? nf0.format(b) : '—'}" aria-label="Operaciones de servicios financieros en ${o.lbl.toLowerCase()} ${diaDe} en ${esc(r.name)}"${dis}></td>`;
+      }).join('');
+      const tot = there && SF.some(o => there[o.f] != null) ? `${moneyC(sfMonto(there))} · ${nf0.format(sfCant(there))} op` : '—';
+      return `<tr><th scope="row" class="l">${esc(r.name)}</th>${cells}<td data-l="Servicios financieros" class="sf dtot"><output id="ci-sf-${id}" aria-live="polite">${tot}</output></td></tr>`;
+    }).join('');
+    return `<div class="ut-edit sf-edit">
+      <h3>Servicios financieros ${diaDe} <span class="muted">· sale en el cierre</span></h3>
+      <p class="muted">Cuántas operaciones se vendieron ${diaDe} y cómo se pagaron. Cada una en efectivo suma ${moneyC(SF[0].val)} y cada una con tarjeta, QR u otro medio suma ${moneyC(SF[1].val)}.</p>
+      <div class="tbl-wrap"><table class="ci-table edit sf-t"><thead><tr><th class="l" scope="col">Local</th>${SF.map(o => `<th scope="col" class="sf">${o.lbl}<small>${moneyC(o.val)} c/u</small></th>`).join('')}<th scope="col" class="sf">Total ${diaDe}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
   }
   function utilEditHTML(fecha, list, diaDe) {
     const rows = list.map(r => {
@@ -980,7 +1023,8 @@
       const v = x => x ? parseNum(x.value) : null;
       const m = v(im), u = v(iu), de = v(ide), dq = v(idq), du = v(idu);
       const utIn = UTIL.map(o => el(`ci-${o.k}-`)), utV = utIn.map(v);
-      if (m == null && u == null && de == null && dq == null && du == null && utV.every(x => x == null)) return;
+      const sfIn = SF.map(o => el(`ci-${o.k}-`)), sfV = sfIn.map(v);
+      if (m == null && u == null && de == null && dq == null && du == null && utV.every(x => x == null) && sfV.every(x => x == null)) return;
       const id = r.m.id + '__' + fecha, there = S.avances.get(id), base = there || r.M.last;
       // Sin acumulado de este día no se puede proyectar: se pide antes de guardar
       if (!there && m == null && u == null) { faltan.push(r.name); return; }
@@ -996,7 +1040,8 @@
       } else ['diaEfectivo', 'diaOtros', 'diaMonto'].forEach(k => { if (there && there[k] != null) rec[k] = there[k]; });
       keep(du, 'diaUnidades');
       UTIL.forEach((o, i) => keep(utV[i], o.f));
-      recs.push([id, rec, [im, iu, ide, idq, idu, ...utIn]]);
+      SF.forEach((o, i) => keep(sfV[i], o.f));
+      recs.push([id, rec, [im, iu, ide, idq, idu, ...utIn, ...sfIn]]);
     });
     if (faltan.length) { S.cierreErr = `Falta el acumulado del mes de ${faltan.join(', ')}: es el dato que usa la proyección.`; render(); return; }
     recs.forEach(([id, rec, els]) => { els.forEach(x => { if (x) x.dataset.dirty = ''; }); put('avances', id, rec); n++; });
@@ -1016,6 +1061,7 @@
     const both = (m, n, sep) => [T.objM ? money(m) : '', T.objU ? `${uSmart(n)} ${u(n)}` : ''].filter(Boolean).join(sep || ' · ');
     const L = [`*Cierre ${cap(DOW_L[D.getDay()])} ${fDM(fecha)}* · ${sel.map(r => r.name).join(', ')}`, ''];
     L.push(`*Vendido ${dia}:* ${T.hoyN ? both(T.hoyM, T.hoyU) : 'sin datos cargados'}${T.sinHoy.length && T.hoyN ? ` _(sin ${T.sinHoy.map(r => r.name).join(', ')})_` : ''}`);
+    if (T.sf) L.push(`*Servicios financieros:* ${moneyC(T.sf.m)} (${sfTxt(T.sf)})`);
     L.push(`*Proyección ${finLbl(T)}:* ${T.proyP == null ? 'todavía no hay días cerrados' : [T.objM ? `${money(T.proyM)} (*${pct(T.proyM / T.objM)}*)` : '', T.objU ? `${nf0.format(T.proyU)} ${u(T.proyU)} (${T.objM ? pct(T.proyU / T.objU) : `*${pct(T.proyU / T.objU)}*`})` : ''].filter(Boolean).join(' · ')}`);
     if (done(T)) L.push('*Objetivo cumplido* 🎉');
     else if (T.habRest) L.push(`*Para llegar al 100 %:* ${both(T.necM, T.necU, ' y ')} por día ${fromLabel(T.firstOpen)} (faltan ${T.objM ? money(T.faltaM) : `${uSmart(T.faltaU)} ${u(T.faltaU)}`} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'})`);
@@ -1025,6 +1071,7 @@
       const M = r.M, U = n => uName(M.unidad, n);
       const bm = (m, n) => [M.objM ? money(m) : '', M.objU ? `${uSmart(n)} ${U(n)}` : ''].filter(Boolean).join(' / ');
       const parts = [r.hoy ? `${dia} ${bm(r.hoy.m, r.hoy.u)}${r.hoy.desde ? ` (desde el ${fDM(r.hoy.desde)})` : ''}` : `${dia} _sin dato_`];
+      if (r.sf) parts.push(`serv. financieros ${moneyC(r.sf.m)}`);
       const pp = proyP(M);
       if (pp != null) parts.push(`proy. ${proySep(M).map(o => `${o.k.toLowerCase()} ${dot({ k: colP(o.p) })} ${pct(o.p)}`).join(' / ')}`);
       if (done(M)) parts.push('cumplido');
@@ -1138,7 +1185,7 @@
     } });
     // 2) Vendido en el día (grande)
     const BIG = 80;
-    const hoyLast = (p75 || utN) ? 168 : 114;
+    const hoyBase = (p75 || utN) ? 168 : 114, hoyLast = hoyBase + (T.sf ? 86 : 0);
     blocks.push({ h: hoyLast + (missing || T.hoyGap ? 44 : 0) + 18, draw: Y => {
       LBL((esHoy ? 'VENDIDO HOY' : `VENDIDO EL ${fDow(fecha).toUpperCase()}`), Y + 26);
       const us = T.objU ? `${uSmart(T.hoyU)} ${u(T.hoyU)}` : '';
@@ -1150,6 +1197,14 @@
       }
       // misma línea: 75 % a la izquierda, total de utilidades (dorado) en el medio, utilidad a la derecha
       if (p75 || utN) triLine(ix, iw, Y + 168, p75, totU, utN, 40);
+      // Servicios financieros: etiqueta y detalle a la izquierda, monto total a la derecha
+      if (T.sf) {
+        const sy = Y + hoyBase;
+        x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, sy + 20, iw, 1);
+        txt('SERVICIOS FINANCIEROS', ix, sy + 54, F(800, 21), '#6ee7b7');
+        x.font = F(600, 21); txt(fit(sfTxt(T.sf), iw - 300), ix, sy + 82, F(600, 21), 'rgba(219,234,254,0.82)');
+        txt(moneyC(T.sf.m), ix + iw, sy + 74, F(900, 44), '#ffffff', 'right');
+      }
       if (missing || T.hoyGap) { x.font = F(600, 23); txt(fit(missing ? `Sin dato: ${T.sinHoy.map(r => r.name).join(', ')}` : `${T.hoyGap === 1 ? '1 local incluye' : `${T.hoyGap} locales incluyen`} días sin cargar`, iw), ix, Y + hoyLast + 44, F(600, 23), '#fcd34d'); }
     } });
     // 3) Proyección (grande): Acc y Op con el mismo tamaño
@@ -1183,8 +1238,9 @@
       let yy = Y + 114;
       if (T.objM) perDay(ix, yy, iw, money(T.necM), 'por día', BIG);
       if (T.objU) { if (T.objM) yy += 64; perDay(ix, yy, iw, uSmart(T.necU), `${u(T.necU)} por día`, T.objM ? 50 : BIG); }
-      x.font = F(600, 25);
-      txt(fit(`Faltan ${[T.objM ? money(T.faltaM) : '', T.objU ? `${uSmart(T.faltaU)} ${u(T.faltaU)}` : ''].filter(Boolean).join(' y ')} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`, iw), ix, yy + 48, F(600, 25), 'rgba(219,234,254,0.88)');
+      const fl = `Faltan ${[T.objM ? money(T.faltaM) : '', T.objU ? `${uSmart(T.faltaU)} ${u(T.faltaU)}` : ''].filter(Boolean).join(' y ')} en ${T.habRest} ${T.habRest === 1 ? 'día hábil' : 'días hábiles'} · ${fromLabel(T.firstOpen)}`;
+      const flz = fitFont(fl, iw, 25, 18, 600); x.font = F(600, flz);
+      txt(fit(fl, iw), ix, yy + 48, F(600, flz), 'rgba(219,234,254,0.88)');
     } });
     const SEP = 34, headH = 92, footH = 30;
     const totH = headH + blocks.reduce((a, b) => a + b.h, 0) + SEP * (blocks.length - 1) + footH;
@@ -1232,6 +1288,12 @@
         let last = cy + 76;
         if (p75L != null || utL) { last = cy + 118; triLine(cx, cw, last, p75L != null ? money(p75L) : null, totL, utL, 28); }
         cy = last + 16;
+      }
+      if (r.sf) {
+        txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7');
+        x.font = F(600, 19); txt(fit(sfTxt(r.sf), cw - 220), cx, cy + 48, F(600, 19), 'rgba(219,234,254,0.8)');
+        txt(moneyC(r.sf.m), cx + cw, cy + 44, F(900, 32), '#ffffff', 'right');
+        cy += 64;
       }
       lsep(cy); cy += 20;
       // Proyección: Acc y Op lado a lado, mismo tamaño
@@ -1404,7 +1466,7 @@
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.e + '/' + r.sf.o : '-') : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);
@@ -1520,6 +1582,7 @@
       Object.entries(dirty).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dataset.dirty = '1'; } });
       main.querySelectorAll('output[id^="ci-dt-"]').forEach(o => updDiaTot(o.id.slice(6)));
       main.querySelectorAll('output[id^="ci-ut-"]').forEach(o => updUtTot(o.id.slice(6)));
+      main.querySelectorAll('output[id^="ci-sf-"]').forEach(o => updSfTot(o.id.slice(6)));
       if (focus) { const el = document.getElementById(focus.id); if (el && !el.disabled) { el.focus({ preventScroll: true }); try { el.setSelectionRange(focus.a, focus.b); } catch (e) { } } }
       if (S.loaded) {
         animateNumbers();
@@ -1605,7 +1668,7 @@
     S.bump = true; S.draw = true;
     const prevA = S.avances.get(id);
     put('avances', id, { metaId: meta.id, fecha, monto: Math.max(0, Math.round(m || 0)), unidades: Math.max(0, Math.round(u || 0)), cerrado, actualizado: new Date().toISOString(),
-      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros', ...UTIL.map(o => o.f)].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
+      ...Object.fromEntries(['diaMonto', 'diaUnidades', 'diaEfectivo', 'diaOtros', ...UTIL.map(o => o.f), ...SF.map(o => o.f)].filter(k => prevA && prevA[k] != null).map(k => [k, prevA[k]])) });
     if (lastModel && done(lastModel) && !wasDone) { confetti(); toast('¡Objetivo cumplido!'); }
     else toast('Listo, recalculado');
   }
@@ -1666,6 +1729,7 @@
     if (el.matches('[inputmode="decimal"], [inputmode="numeric"]')) liveFormat(el);
     if (/^ci-d[eq]-/.test(el.id)) updDiaTot(el.id.slice(6));
     if (/^ci-u[cex]-/.test(el.id)) updUtTot(el.id.slice(6));
+    if (/^ci-s[eo]-/.test(el.id)) updSfTot(el.id.slice(6));
   });
   main.addEventListener('change', e => {
     const el = e.target;
@@ -1677,7 +1741,7 @@
   });
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
-    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux|se|so)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;

@@ -277,3 +277,11 @@
   .ut-tile .ut-v { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 20px; margin: 0; }
   .ut-tile .ut-m { grid-column: 1 / -1; margin-top: 4px; }
 }
+
+/* Servicios financieros (sale en el cierre) */
+.sf-edit { border-top-color: rgba(52, 211, 153, 0.38); }
+.ci-table th.sf { color: #6ee7b7; }
+.ci-table th.sf small { display: block; font-weight: 700; opacity: 0.8; letter-spacing: 0; white-space: nowrap; }
+.ci-table td.sf input.qin { border-color: rgba(52, 211, 153, 0.42); background: rgba(52, 211, 153, 0.08); }
+.ci-table td.sf input.qin:focus { border-color: #34d399; }
+.ci-table td.sf.dtot output { color: #6ee7b7; min-width: 150px; }
