@@ -1219,12 +1219,22 @@
     const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
     const totP = p75P != null && pUtOp != null ? p75P + pUtOp : null;
     const utLine = pc != null && (p75P != null || pUtOp != null);
-    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0), draw: Y => {
+    // Servicios financieros proyectados (solo cantidad): promedio de accesorios por día cargado × días hábiles del mes
+    const sfProy = M => { const ds = M.av.filter(sfHas); return ds.length ? ds.reduce((q, a) => q + sfCant(a), 0) / ds.length * M.H : null; };
+    const sfPs = sel.map(r => sfProy(r.M)).filter(v => v != null);
+    const sfP = sfPs.length ? sfPs.reduce((a, b) => a + b, 0) : null;
+    const accTxt = v => `${nf0.format(v)} ${Math.round(v) === 1 ? 'accesorio' : 'accesorios'}`;
+    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (sfP != null ? 60 : 0), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
       if (pc == null) { big('—', Y + 104, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 96, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
       let yy = Y + 42;
       proyRows.forEach(r => { proyRow(ix, yy, iw, r.lbl, r.main, r.sub2, r.p, PS); yy += proyGeo(PS).h + 12; });
-      if (utLine) triLine(ix, iw, yy + 38, p75P != null ? money(p75P) : null, totP != null ? money(totP) : null, pUtOp != null ? money(pUtOp) : null, 40);
+      if (utLine) { triLine(ix, iw, yy + 38, p75P != null ? money(p75P) : null, totP != null ? money(totP) : null, pUtOp != null ? money(pUtOp) : null, 40); yy += 56; }
+      if (sfP != null) {
+        x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
+        txt('SERVICIOS FINANCIEROS', ix, yy + 46, F(800, 21), '#6ee7b7');
+        txt(accTxt(sfP), ix + iw, yy + 48, F(900, 40), '#ffffff', 'right');
+      }
     } });
     // 4) Para llegar al 100 % (grande)
     const fin = done(T) || T.ended || !T.habRest;
@@ -1303,6 +1313,8 @@
       const p75PL = M.objM && M.started ? Math.round((M.proyM != null ? M.proyM : M.vendM) * 0.75) : null;
       const uOpL = M.started ? pUtOpOf(M) : null;
       if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
+      const sfPL = sfProy(M);
+      if (sfPL != null) { txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7'); txt(accTxt(sfPL), cx + cw, cy + 26, F(900, 28), '#ffffff', 'right'); cy += 44; }
       lsep(cy); cy += 20;
       // Para llegar al 100 %
       SL('PARA LLEGAR AL 100 %', cy + 20);
@@ -1467,7 +1479,7 @@
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
     const fecha = cierreFecha();
-    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.n : '-') : '')).join(',');
+    return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.n : '-') + ':' + r.M.av.filter(sfHas).map(a => sfCant(a)).join('.') : '')).join(',');
   }
   function scheduleCierreImage() {
     clearTimeout(CI.t);
