@@ -1267,24 +1267,35 @@
     // El total es la suma de los locales, así todo cierra.
     const pUtOpOf = M => { if (!M.objU || avgG == null) return null; const a = avgUt([M]) ?? avgG; return Math.round((M.proyU != null ? M.proyU : M.vendU) * a); };
     const pUtOp = avgG == null || !T.objU ? null : sel.reduce((acc, r) => acc + (pUtOpOf(r.M) || 0), 0);
+    // Servicios financieros proyectados: promedio de accesorios por día cargado × días hábiles del mes; en plata, × $ 1.967
+    const sfProy = M => { const ds = M.av.filter(sfHas); return ds.length ? ds.reduce((q, a) => q + sfCant(a), 0) / ds.length * M.H : null; };
+    const sfMon = v => v == null ? 0 : Math.round(v) * SF[0].val;
+    const sfPs = sel.map(r => sfProy(r.M)).filter(v => v != null);
+    const sfP = sfPs.length ? sfPs.reduce((a, b) => a + b, 0) : null;
+    const accTxt = v => `${nf0.format(v)} ${Math.round(v) === 1 ? 'accesorio' : 'accesorios'}`;
+    // Utilidad proyectada (dorado) = 75 % del Acc proyectado + utilidad de Op − servicios financieros
     const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
-    const totP = p75P != null && pUtOp != null ? p75P + pUtOp : null;
+    const totP = p75P != null && pUtOp != null ? p75P + pUtOp - sfMon(sfP) : null;
     const utLine = pc != null && (p75P != null || pUtOp != null);
     // Gastos: los de GEO en general; si no están cargados, la suma de los locales del cierre
     const gGeo = gastosGeo(fecha), gLoc = sel.map(r => gastosDe(r.m)).filter(v => v != null);
     const gT = gGeo != null ? gGeo : gLoc.length ? gLoc.reduce((a, b) => a + b, 0) : null;
-    const resLine = utLine && gT != null, resT = (p75P || 0) + (pUtOp || 0) - (gT || 0);
-    // Servicios financieros proyectados (solo cantidad): promedio de accesorios por día cargado × días hábiles del mes
-    const sfProy = M => { const ds = M.av.filter(sfHas); return ds.length ? ds.reduce((q, a) => q + sfCant(a), 0) / ds.length * M.H : null; };
-    const sfPs = sel.map(r => sfProy(r.M)).filter(v => v != null);
-    const sfP = sfPs.length ? sfPs.reduce((a, b) => a + b, 0) : null;
-    const accTxt = v => `${nf0.format(v)} ${Math.round(v) === 1 ? 'accesorio' : 'accesorios'}`;
-    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (resLine ? 106 : 0) + (sfP != null ? 60 : 0), draw: Y => {
+    const resLine = utLine && gT != null, resT = (p75P || 0) + (pUtOp || 0) - sfMon(sfP) - (gT || 0);
+    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (sfP != null ? 104 : 0) + (resLine ? 106 : 0), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
       if (pc == null) { big('—', Y + 104, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 96, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
       let yy = Y + 42;
       proyRows.forEach(r => { proyRow(ix, yy, iw, r.lbl, r.main, r.sub2, r.p, PS); yy += proyGeo(PS).h + 12; });
       if (utLine) { triLine(ix, iw, yy + 38, p75P != null ? money(p75P) : null, totP != null ? money(totP) : null, pUtOp != null ? money(pUtOp) : null, 40); yy += 56; }
+      // Servicios financieros: cantidad y, abajo, la plata (ya descontada de la utilidad de arriba)
+      if (sfP != null) {
+        x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
+        txt('SERVICIOS FINANCIEROS', ix, yy + 46, F(800, 21), '#6ee7b7');
+        txt(accTxt(sfP), ix + iw, yy + 48, F(900, 40), '#ffffff', 'right');
+        txt(`${nf0.format(Math.round(sfP))} × ${money(SF[0].val)}`, ix, yy + 88, F(600, 21), 'rgba(219,234,254,0.7)');
+        txt('− ' + money(sfMon(sfP)), ix + iw, yy + 92, F(800, 34), '#fda4af', 'right');
+        yy += 104;
+      }
       if (resLine) {
         x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
         txt(gGeo != null ? 'GASTOS GEO' : 'GASTOS DE LOS LOCALES', ix, yy + 44, F(800, 21), '#fda4af');
@@ -1292,11 +1303,6 @@
         txt('RESULTADO PROYECTADO', ix, yy + 94, F(800, 21), '#fdba74');
         txt((resT < 0 ? '− ' : '') + money(Math.abs(resT)), ix + iw, yy + 98, F(900, 46), resT >= 0 ? '#34d399' : '#fb7185', 'right');
         yy += 106;
-      }
-      if (sfP != null) {
-        x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
-        txt('SERVICIOS FINANCIEROS', ix, yy + 46, F(800, 21), '#6ee7b7');
-        txt(accTxt(sfP), ix + iw, yy + 48, F(900, 40), '#ffffff', 'right');
       }
     } });
     // 4) Para llegar al 100 % (grande)
@@ -1375,16 +1381,21 @@
       // Utilidad proyectada del local: 75 % del Acc proyectado · total (dorado) · Op proyectadas × promedio
       const p75PL = M.objM && M.started ? Math.round((M.proyM != null ? M.proyM : M.vendM) * 0.75) : null;
       const uOpL = M.started ? pUtOpOf(M) : null;
-      if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
+      // Utilidad proyectada del local (dorado) ya con los servicios financieros descontados
+      const sfPL = sfProy(M), sfML = sfMon(sfPL);
+      if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL - sfML) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
+      if (sfPL != null) {
+        txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7'); txt(accTxt(sfPL), cx + cw, cy + 26, F(900, 28), '#ffffff', 'right');
+        txt(`${nf0.format(Math.round(sfPL))} × ${money(SF[0].val)}`, cx, cy + 56, F(600, 17), 'rgba(219,234,254,0.7)'); txt('− ' + money(sfML), cx + cw, cy + 58, F(800, 24), '#fda4af', 'right');
+        cy += 76;
+      }
       const gL = gastosDe(r.m);
       if (gL != null && (p75PL != null || uOpL != null)) {
-        const resL = (p75PL || 0) + (uOpL || 0) - gL;
+        const resL = (p75PL || 0) + (uOpL || 0) - sfML - gL;
         txt('GASTOS DEL LOCAL', cx, cy + 22, F(800, 17), '#fda4af'); txt('− ' + money(gL), cx + cw, cy + 25, F(800, 26), '#fda4af', 'right');
         txt('RESULTADO PROYECTADO', cx, cy + 62, F(800, 17), '#fdba74'); txt((resL < 0 ? '− ' : '') + money(Math.abs(resL)), cx + cw, cy + 67, F(900, 32), resL >= 0 ? '#34d399' : '#fb7185', 'right');
         cy += 84;
       }
-      const sfPL = sfProy(M);
-      if (sfPL != null) { txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7'); txt(accTxt(sfPL), cx + cw, cy + 26, F(900, 28), '#ffffff', 'right'); cy += 44; }
       lsep(cy); cy += 20;
       // Para llegar al 100 %
       SL('PARA LLEGAR AL 100 %', cy + 20);
