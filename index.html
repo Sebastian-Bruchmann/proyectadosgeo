@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
 <link rel="stylesheet" href="/app.css?v=2">
-<link rel="stylesheet" href="/menu.css?v=8">
+<link rel="stylesheet" href="/menu.css?v=9">
 </head>
 <body>
 <div id="geo-bg" aria-hidden="true"></div>
@@ -64,6 +64,7 @@
       <label class="fld"><span>Objetivo en unidades</span><input id="ed-unid" inputmode="numeric" autocomplete="off" placeholder="45"></label>
     </div>
     <label class="fld"><span>¿Qué contás como unidad?</span><input id="ed-unidad" autocomplete="off" placeholder="Equipos"></label>
+    <label class="fld"><span>Gastos del local en el período (total, opcional)</span><input id="ed-gastos" inputmode="decimal" autocomplete="off" placeholder="Sin cargar"></label>
     <fieldset class="chips">
       <legend>Días que se trabaja</legend>
       <div style="display:flex;flex-wrap:wrap;gap:8px" id="ed-dias"></div>
@@ -131,6 +132,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="/app.js?v=25"></script>
+<script src="/app.js?v=26"></script>
 </body>
 </html>

@@ -8,7 +8,10 @@ import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[A-Za-z0-9_.:-]{1,120}$/;
 const LIMITS = { metas: 2000, avances: 20000 };
-const K = { rev: 'proyectados:rev', metas: 'proyectados:metas', avances: 'proyectados:avances', try: 'proyectados:intentos:' };
+// En los links de prueba (deploys de vista previa) se usa una copia aparte de los datos, así nada de lo que se pruebe toca lo real.
+const PRUEBA = process.env.VERCEL_ENV === 'preview';
+const PRE = PRUEBA ? 'proyectados-prueba:' : 'proyectados:';
+const K = { rev: PRE + 'rev', metas: PRE + 'metas', avances: PRE + 'avances', ajustes: PRE + 'ajustes', try: 'proyectados:intentos:' };
 const MODOS = ['ver', 'editar'];
 
 /* ---------- conexión a Redis ---------- */
@@ -53,8 +56,13 @@ function cleanMeta(b) {
     nombre: str(b.nombre, 120) || 'Objetivo', tipo, desde, hasta,
     objMonto: num(b.objMonto), objUnidades: num(b.objUnidades), unidad: str(b.unidad, 40) || 'Equipos',
     dias: dias.length ? dias : [1, 2, 3, 4, 5, 6], cerrados, creado: ts(b.creado), actualizado: ts(b.actualizado),
+    // Gastos del local en el período (total), opcional: se descuentan de la utilidad proyectada
+    ...(typeof b.gastos === 'number' && isFinite(b.gastos) ? { gastos: num(b.gastos) } : {}),
   };
 }
+// Ajustes generales por mes, por ahora los gastos de GEO: id "gastos-geo-AAAA-MM"
+const AJ = /^gastos-geo-\d{4}-\d{2}$/;
+function cleanAjuste(b) { return { monto: num(b.monto), actualizado: ts(b.actualizado) }; }
 function cleanAvance(b) {
   if (typeof b.metaId !== 'string' || !ID.test(b.metaId)) return null;
   const fecha = isoOr(b.fecha, null);
@@ -88,7 +96,7 @@ function leerLlaves(v) {
 }
 
 /* Lo que ve cada uno: los objetivos bloqueados "para ver" salen sin números ni avances. */
-function vista(rev, metas, avances, llaves, extra) {
+function vista(rev, metas, avances, llaves, extra, ajustes) {
   const outM = {}, ocultos = new Set();
   for (const [id, m] of Object.entries(metas)) {
     if (!m || typeof m !== 'object') continue;
@@ -102,15 +110,40 @@ function vista(rev, metas, avances, llaves, extra) {
   }
   const outA = {};
   for (const [id, a] of Object.entries(avances)) if (a && !ocultos.has(a.metaId)) outA[id] = a;
-  return { rev: +rev || 0, metas: outM, avances: outA, ...extra };
+  return { rev: +rev || 0, metas: outM, avances: outA, ajustes: ajustes || {}, ...(PRUEBA ? { prueba: true } : {}), ...extra };
 }
 async function estado(llaves, extra) {
-  const [rev, m, a] = await redis([['GET', K.rev], ['HGETALL', K.metas], ['HGETALL', K.avances]]);
-  return vista(rev, hashToObj(m), hashToObj(a), llaves, { ...(rev == null ? { nuevo: true } : {}), ...extra });
+  const [rev, m, a, j] = await redis([['GET', K.rev], ['HGETALL', K.metas], ['HGETALL', K.avances], ['HGETALL', K.ajustes]]);
+  return vista(rev, hashToObj(m), hashToObj(a), llaves, { ...(rev == null ? { nuevo: true } : {}), ...extra }, hashToObj(j));
+}
+/* Link de prueba: la primera vez copia los datos reales a la copia de prueba (y carga los gastos de noviembre para verlos). */
+async function copiaDePrueba() {
+  if (!PRUEBA) return;
+  const [rev] = await redis([['GET', K.rev]]);
+  if (rev != null) return;
+  const [r, m, a, j] = await redis([['GET', 'proyectados:rev'], ['HGETALL', 'proyectados:metas'], ['HGETALL', 'proyectados:avances'], ['HGETALL', 'proyectados:ajustes']]);
+  const flat = x => Array.isArray(x) ? x : Object.entries(x || {}).flat();
+  const metas = hashToObj(m);
+  const G = { 'plaza': 10111000, 'ruta 9': 5710000, '9 de julio 1': 4600000, 'general paz': 7500000 };
+  const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  for (const [id, mt] of Object.entries(metas)) {
+    if (!mt || mt.desde > '2026-11-30' || mt.hasta < '2026-11-01' || mt.gastos != null) continue;
+    const k = Object.keys(G).find(g => new RegExp('^' + g + '(\\b|\\s|$)').test(nrm(mt.nombre).replace(/\(.*?\)|noviembre|2026/g, '').trim()));
+    if (k) metas[id] = { ...mt, gastos: G[k] };
+  }
+  const cmds = [];
+  const mf = Object.entries(metas).flatMap(([id, v]) => [id, JSON.stringify(v)]);
+  if (mf.length) cmds.push(['HSET', K.metas, ...mf]);
+  const af = flat(a); if (af.length) cmds.push(['HSET', K.avances, ...af]);
+  const jf = flat(j); if (jf.length) cmds.push(['HSET', K.ajustes, ...jf]);
+  cmds.push(['HSETNX', K.ajustes, 'gastos-geo-2026-11', JSON.stringify({ monto: 56000000, actualizado: new Date().toISOString() })]);
+  cmds.push(['SET', K.rev, String((+r || 0) + 1)]);
+  await redis(cmds);
 }
 
 /* ---------- cambios ---------- */
 async function aplicar(ops, llaves) {
+  await copiaDePrueba();
   const delAv = ops.filter(o => o && o.col === 'avances' && o.body == null && typeof o.id === 'string' && ID.test(o.id)).map(o => o.id);
   const pre = await redis([['HGETALL', K.metas], ['HLEN', K.avances], ...(delAv.length ? [['HMGET', K.avances, ...delAv]] : [])]);
   const metas = hashToObj(pre[0]);
@@ -120,8 +153,14 @@ async function aplicar(ops, llaves) {
   const writes = [], rechazados = [];
   for (const op of ops) {
     const col = op && op.col, id = op && op.id;
-    if (!['metas', 'avances'].includes(col) || typeof id !== 'string' || !ID.test(id)) continue;
+    if (!['metas', 'avances', 'ajustes'].includes(col) || typeof id !== 'string' || !ID.test(id)) continue;
     const key = col + '/' + id;
+    if (col === 'ajustes') {
+      if (!AJ.test(id)) continue;
+      if (op.body == null) writes.push(['HDEL', K.ajustes, id]);
+      else if (typeof op.body === 'object') writes.push(['HSET', K.ajustes, id, JSON.stringify(cleanAjuste(op.body))]);
+      continue;
+    }
     if (col === 'metas') {
       const cur = metas[id];
       if (!abierto(id, cur, llaves)) { rechazados.push(key); continue; }
@@ -221,6 +260,7 @@ export default async function handler(req, res) {
   }
   try {
     if (req.method === 'GET') {
+      await copiaDePrueba();
       const llaves = leerLlaves(req.headers['x-llaves'] || url.searchParams.get('llaves'));
       const rev = url.searchParams.get('rev');
       if (rev != null && /^\d+$/.test(rev)) {

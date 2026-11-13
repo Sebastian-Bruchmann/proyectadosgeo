@@ -95,6 +95,7 @@
     enter: true, draw: true, bump: false, celebrate: false,
     llaves: {}, unlockErr: '', unlockBusy: false,
     view: 'main', cierreFecha: null, cierreEdit: false, cierreErr: '', cierreEstado: null,
+    ajustes: new Map(), gastosEdit: false, gastosErr: '', prueba: false,
   };
   let lastModel = null, rendering = false, needsRender = false;
   const PREF_KEY = 'proyectados-prefs', CACHE_KEY = 'proyectados-cache', PEND_KEY = 'proyectados-pendientes', KEYS_KEY = 'proyectados-llaves', MIG_KEY = 'proyectados-base-nueva';
@@ -115,16 +116,18 @@
   function stateToMaps(st) {
     S.metas = new Map(Object.entries(st.metas || {}).map(([id, v]) => [id, { ...v, id }]));
     S.avances = new Map(Object.entries(st.avances || {}).map(([id, v]) => [id, { ...v, id }]));
+    S.ajustes = new Map(Object.entries(st.ajustes || {}).map(([id, v]) => [id, { ...v, id }]));
+    S.prueba = !!st.prueba;
     S.rev = st.rev || 0;
   }
   function applyLocal(key, body) {
     const [col, id] = key.split('/');
-    const map = col === 'metas' ? S.metas : S.avances;
+    const map = col === 'metas' ? S.metas : col === 'ajustes' ? S.ajustes : S.avances;
     if (body) map.set(id, { ...body, id }); else map.delete(id);
   }
   function cacheState() {
     const obj = m => Object.fromEntries([...m].map(([id, v]) => { const { id: _, ...rest } = v; return [id, rest]; }));
-    lsSet(CACHE_KEY, JSON.stringify({ v: 3, rev: S.rev, metas: obj(S.metas), avances: obj(S.avances) }));
+    lsSet(CACHE_KEY, JSON.stringify({ v: 3, rev: S.rev, metas: obj(S.metas), avances: obj(S.avances), ajustes: obj(S.ajustes), prueba: S.prueba }));
   }
   function receive(st) {
     stateToMaps(st);
@@ -223,6 +226,7 @@
     if (!S.online) { el.className = 'save-state off'; el.innerHTML = `<i></i>${pendingOps.size ? 'Sin conexión: cambios sin enviar' : 'Sin conexión'}`; return; }
     if (inflight || pendingOps.size) { el.className = 'save-state busy'; el.innerHTML = '<i></i>Guardando…'; return; }
     el.className = 'save-state'; el.innerHTML = '<i></i>Sincronizado';
+    document.body.classList.toggle('es-prueba', !!S.prueba);
   }
 
   /* ---------- objetivo actual ---------- */
@@ -689,6 +693,10 @@
   const proyP = M => M.objM ? (M.proyM != null ? M.proyM / M.objM : null) : (M.objU && M.proyU != null ? M.proyU / M.objU : null);
   const sortCierre = list => list.slice().sort((a, b) => (proyP(b.M) ?? mainP(b.M) ?? -1) - (proyP(a.M) ?? mainP(a.M) ?? -1));
   const colP = p => p == null ? '' : p >= 1 ? 'ok' : p >= 0.9 ? 'warn' : 'bad';
+  /* Gastos del mes: los de cada local van en su objetivo; los de GEO en general, en un ajuste por mes */
+  const gastosGeoId = fecha => 'gastos-geo-' + fecha.slice(0, 7);
+  const gastosGeo = fecha => { const a = S.ajustes.get(gastosGeoId(fecha)); return a && a.monto != null ? +a.monto : null; };
+  const gastosDe = m => m && m.gastos != null ? +m.gastos : null;
   /* Vendido del día: el efectivo entra entero; a tarjeta / QR / otros se le descuenta la comisión */
   const COMISION = 0.0322;
   const COM_TXT = `${(COMISION * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })} %`;
@@ -803,6 +811,7 @@
   const finLbl = T => T.mes ? 'a fin de mes' : 'al cierre del período';
   const ICO_CIERRE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5"/><path d="M8.5 11.5h7M8.5 15.5h4.5"/></svg>';
   const ICO_SHARE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m0 0 4 4m-4-4L8 7"/><path d="M5 12v6.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V12"/></svg>';
+  const ICO_GASTOS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></svg>';
   const ICO_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
 
   function cierreHTML() {
@@ -834,9 +843,11 @@
         <button type="button" class="btn primary lg" id="ci-share"${T ? '' : ' disabled'}>${ICO_SHARE}Enviar imagen</button>
         <button type="button" class="btn lg" id="ci-copy"${T ? '' : ' disabled'}>${ICO_COPY}Copiar texto</button>
         <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Cargar ventas del día'}</button>
+        <button type="button" class="btn lg ghost-ico" id="ci-gastos" aria-pressed="${S.gastosEdit}">${ICO_GASTOS}${S.gastosEdit ? 'Cerrar gastos' : 'Gastos del mes'}</button>
       </div>
       ${(sinAcum.length || sinDia.length) && !S.cierreEdit ? `<p class="ci-warn">${sinAcum.length ? `Sin acumulado ${dTxt}: ${esc(lista(sinAcum))} (se proyecta con su último dato). ` : ''}${sinDia.length ? `Sin lo vendido ${dTxt}: ${esc(lista(sinDia))} (no suma en "${hoyLbl(fecha)}"). ` : ''}Completalo en "Cargar ventas del día".</p>` : ''}
     </section>`;
+    if (S.gastosEdit) h += gastosHTML(fecha, rows);
     if (!T) return h + `<section class="glass panel rise" style="--i:2"><p class="muted">Elegí al menos un local para armar el cierre.</p></section>`;
     h += cierreKpisHTML(T, fecha, 2);
     h += cierreTableHTML(fecha, sel, T, 5);
@@ -849,6 +860,39 @@
     return h;
   }
   /* Las tres cifras del cierre: vendido en el día, proyección y lo que hace falta por día */
+  /* Panel para cargar o cambiar los gastos del mes (de cada local y de GEO) */
+  function gastosHTML(fecha, rows) {
+    const D = parse(fecha), mes = `${MESES[D.getMonth()]} ${D.getFullYear()}`, g = gastosGeo(fecha);
+    const ph = v => v != null ? nf0.format(v) : 'Sin cargar';
+    const body = rows.filter(r => !r.locked).map(r => {
+      const v = gastosDe(r.m), can = canEdit(r.m);
+      return `<tr><th scope="row" class="l">${esc(r.name)}${can ? '' : ` <span class="muted" title="Tiene contraseña">${ICO.lock}</span>`}</th><td data-l="Gastos del mes" class="ga"><input class="qin" id="ga-${esc(r.m.id)}" inputmode="decimal" autocomplete="off" placeholder="${ph(v)}" aria-label="Gastos del mes de ${esc(r.name)}"${can ? '' : ' disabled'}></td></tr>`;
+    }).join('');
+    return `<section class="glass panel entry ga-panel rise" style="--i:2" aria-labelledby="ga-h">
+      <div class="panel-head"><div><p class="eyebrow">${esc(cap(mes))}</p><h2 id="ga-h">Gastos del mes</h2><p>El total de gastos de cada local y el de GEO en general. Se descuentan de la utilidad proyectada en la imagen: los de cada local en su tarjeta y los de GEO en el total. El número gris es lo cargado ahora; si dejás un campo vacío, queda como está.</p></div></div>
+      <div class="tbl-wrap"><table class="ci-table edit ga-t"><thead><tr><th class="l" scope="col">Local</th><th scope="col" class="ga">Gastos del mes</th></tr></thead>
+        <tbody>${body}<tr class="ga-geo"><th scope="row" class="l">GEO (general)</th><td data-l="Gastos de GEO" class="ga"><input class="qin" id="ga-geo" inputmode="decimal" autocomplete="off" placeholder="${ph(g)}" aria-label="Gastos de GEO en general"></td></tr></tbody></table></div>
+      ${S.gastosErr ? `<p class="err" role="alert">${esc(S.gastosErr)}</p>` : ''}
+      <div class="q-actions"><button type="button" class="btn" id="ga-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ga-save">Guardar gastos</button></div>
+    </section>`;
+  }
+  function saveGastos() {
+    const fecha = cierreFecha(), now = new Date().toISOString();
+    let n = 0;
+    cierreRows(fecha).filter(r => !r.locked && canEdit(r.m)).forEach(r => {
+      const el = document.getElementById('ga-' + r.m.id), v = el ? parseNum(el.value) : null;
+      if (v == null) return;
+      const { id, candado, abierto, ...rest } = r.m;
+      put('metas', r.m.id, { ...rest, gastos: Math.max(0, Math.round(v)), actualizado: now });
+      n++;
+    });
+    const eg = $('#ga-geo'), vg = eg ? parseNum(eg.value) : null;
+    if (vg != null) { put('ajustes', gastosGeoId(fecha), { monto: Math.max(0, Math.round(vg)), actualizado: now }); n++; }
+    if (!n) { S.gastosErr = 'Escribí al menos un monto.'; render(); return; }
+    S.gastosErr = ''; S.gastosEdit = false; S.bump = true;
+    render();
+    toast('Gastos guardados');
+  }
   function cierreKpisHTML(T, fecha, i) {
     const u = n => esc(uName(T.unidad, n));
     const per = T.mes ? 'del mes' : 'del período';
@@ -1226,17 +1270,29 @@
     const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
     const totP = p75P != null && pUtOp != null ? p75P + pUtOp : null;
     const utLine = pc != null && (p75P != null || pUtOp != null);
+    // Gastos: los de GEO en general; si no están cargados, la suma de los locales del cierre
+    const gGeo = gastosGeo(fecha), gLoc = sel.map(r => gastosDe(r.m)).filter(v => v != null);
+    const gT = gGeo != null ? gGeo : gLoc.length ? gLoc.reduce((a, b) => a + b, 0) : null;
+    const resLine = utLine && gT != null, resT = (p75P || 0) + (pUtOp || 0) - (gT || 0);
     // Servicios financieros proyectados (solo cantidad): promedio de accesorios por día cargado × días hábiles del mes
     const sfProy = M => { const ds = M.av.filter(sfHas); return ds.length ? ds.reduce((q, a) => q + sfCant(a), 0) / ds.length * M.H : null; };
     const sfPs = sel.map(r => sfProy(r.M)).filter(v => v != null);
     const sfP = sfPs.length ? sfPs.reduce((a, b) => a + b, 0) : null;
     const accTxt = v => `${nf0.format(v)} ${Math.round(v) === 1 ? 'accesorio' : 'accesorios'}`;
-    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (sfP != null ? 60 : 0), draw: Y => {
+    blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (resLine ? 106 : 0) + (sfP != null ? 60 : 0), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
       if (pc == null) { big('—', Y + 104, 60); x.font = F(600, 24); txt('Aparece cuando haya un día cerrado', ix + 80, Y + 96, F(600, 24), 'rgba(219,234,254,0.8)'); return; }
       let yy = Y + 42;
       proyRows.forEach(r => { proyRow(ix, yy, iw, r.lbl, r.main, r.sub2, r.p, PS); yy += proyGeo(PS).h + 12; });
       if (utLine) { triLine(ix, iw, yy + 38, p75P != null ? money(p75P) : null, totP != null ? money(totP) : null, pUtOp != null ? money(pUtOp) : null, 40); yy += 56; }
+      if (resLine) {
+        x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
+        txt(gGeo != null ? 'GASTOS GEO' : 'GASTOS DE LOS LOCALES', ix, yy + 44, F(800, 21), '#fda4af');
+        txt('− ' + money(gT), ix + iw, yy + 46, F(800, 34), '#fda4af', 'right');
+        txt('RESULTADO PROYECTADO', ix, yy + 94, F(800, 21), '#fdba74');
+        txt((resT < 0 ? '− ' : '') + money(Math.abs(resT)), ix + iw, yy + 98, F(900, 46), resT >= 0 ? '#34d399' : '#fb7185', 'right');
+        yy += 106;
+      }
       if (sfP != null) {
         x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
         txt('SERVICIOS FINANCIEROS', ix, yy + 46, F(800, 21), '#6ee7b7');
@@ -1320,6 +1376,13 @@
       const p75PL = M.objM && M.started ? Math.round((M.proyM != null ? M.proyM : M.vendM) * 0.75) : null;
       const uOpL = M.started ? pUtOpOf(M) : null;
       if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
+      const gL = gastosDe(r.m);
+      if (gL != null && (p75PL != null || uOpL != null)) {
+        const resL = (p75PL || 0) + (uOpL || 0) - gL;
+        txt('GASTOS DEL LOCAL', cx, cy + 22, F(800, 17), '#fda4af'); txt('− ' + money(gL), cx + cw, cy + 25, F(800, 26), '#fda4af', 'right');
+        txt('RESULTADO PROYECTADO', cx, cy + 62, F(800, 17), '#fdba74'); txt((resL < 0 ? '− ' : '') + money(Math.abs(resL)), cx + cw, cy + 67, F(900, 32), resL >= 0 ? '#34d399' : '#fb7185', 'right');
+        cy += 84;
+      }
       const sfPL = sfProy(M);
       if (sfPL != null) { txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7'); txt(accTxt(sfPL), cx + cw, cy + 26, F(900, 28), '#ffffff', 'right'); cy += 44; }
       lsep(cy); cy += 20;
@@ -1485,6 +1548,9 @@
   }
   const CI = { url: null, blob: null, name: '', sig: '', t: null };
   function cierreSig() {
+    return cierreSig0() + '|g' + (gastosGeo(cierreFecha()) ?? '-') + ':' + cierreRows(cierreFecha()).map(r => gastosDe(r.m) ?? '-').join(',');
+  }
+  function cierreSig0() {
     const fecha = cierreFecha();
     return fecha + '|' + S.rev + '|' + cierreRows(fecha).map(r => r.key + (r.sel ? 1 : 0) + (r.M ? r.M.vendM + ':' + r.M.vendU + ':' + r.M.habRest + ':' + (r.hoy ? r.hoy.m + ':' + r.hoy.u : '-') + ':' + (r.M.last ? r.M.last.fecha : '') + ':' + utilOf(r.M, fecha).diaT + ':' + utilOf(r.M, fecha).mesT + ':' + (r.sf ? r.sf.n : '-') + ':' + r.M.av.filter(sfHas).map(a => sfCant(a)).join('.') : '')).join(',');
   }
@@ -1762,6 +1828,7 @@
   main.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.target.id === 'f-m' || e.target.id === 'f-u')) { e.preventDefault(); saveAvance(); }
     if (e.key === 'Enter' && /^ci-(m|u|de|dq|du|uc|ue|ux|sa)-/.test(e.target.id || '')) { e.preventDefault(); saveCierreVentas(); }
+    if (e.key === 'Enter' && /^ga-/.test(e.target.id || '')) { e.preventDefault(); saveGastos(); }
   });
   main.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;
@@ -1776,6 +1843,9 @@
     if (t.id === 'ci-copy') { copyCierre(); return; }
     if (t.id === 'ut-share') { shareUtil(); return; }
     if (t.id === 'ut-copy') { copyUtil(); return; }
+    if (t.id === 'ci-gastos') { S.gastosEdit = !S.gastosEdit; S.gastosErr = ''; render(); if (S.gastosEdit) { const f = main.querySelector('.ga-t input:not([disabled])'); if (f) f.focus(); } return; }
+    if (t.id === 'ga-cancel') { S.gastosEdit = false; S.gastosErr = ''; render(); return; }
+    if (t.id === 'ga-save') { saveGastos(); return; }
     if (t.id === 'ci-edit') { S.cierreEdit = !S.cierreEdit; S.cierreErr = ''; S.cierreEstado = null; render(); if (S.cierreEdit) { const f = main.querySelector('.ci-table input:not([disabled])'); if (f) f.focus(); } return; }
     if (t.id === 'ci-cancel') { S.cierreEdit = false; S.cierreErr = ''; main.querySelectorAll('[id^="ci-"]').forEach(el => { el.dataset.dirty = ''; }); render(); return; }
     if (t.id === 'ci-save') { saveCierreVentas(); return; }
@@ -2081,6 +2151,7 @@
     $('#ed-monto').value = meta && meta.objMonto ? nf0.format(meta.objMonto) : '';
     $('#ed-unid').value = meta && meta.objUnidades ? nf0.format(meta.objUnidades) : '';
     $('#ed-unidad').value = meta ? (meta.unidad || 'Equipos') : (last && last.unidad) || 'Equipos';
+    $('#ed-gastos').value = meta && meta.gastos != null ? nf0.format(meta.gastos) : '';
     const dias = meta && Array.isArray(meta.dias) && meta.dias.length ? meta.dias.map(Number) : (last && Array.isArray(last.dias) ? last.dias.map(Number) : [1, 2, 3, 4, 5, 6]);
     CHIPS.forEach(([v]) => { $('#ed-d' + v).checked = dias.includes(v); });
     ED.cerrados = meta && Array.isArray(meta.cerrados) ? meta.cerrados.slice() : [];
@@ -2158,12 +2229,14 @@
     const m = parseNum($('#ed-monto').value), u = parseNum($('#ed-unid').value);
     if (!(m > 0) && !(u > 0)) return fail('Cargá un objetivo en pesos, en unidades o en ambos.');
     const nombre = $('#ed-nombre').value.trim() || autoName(t, p);
+    const gastos = parseNum($('#ed-gastos').value);
     const body = {
       nombre, tipo: t, desde: p.desde, hasta: p.hasta,
       objMonto: m > 0 ? Math.round(m) : 0, objUnidades: u > 0 ? Math.round(u) : 0,
       unidad: $('#ed-unidad').value.trim() || 'Equipos', dias,
       cerrados: ED.cerrados.filter(d => d >= p.desde && d <= p.hasta).sort(),
       creado: ED.creado || new Date().toISOString(), actualizado: new Date().toISOString(),
+      ...(gastos != null ? { gastos: Math.max(0, Math.round(gastos)) } : {}),
     };
     const editing = !!ED.id;
     const id = ED.id || ('m' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
