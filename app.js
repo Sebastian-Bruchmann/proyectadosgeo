@@ -697,6 +697,8 @@
   const gastosGeoId = fecha => 'gastos-geo-' + fecha.slice(0, 7);
   const gastosGeo = fecha => { const a = S.ajustes.get(gastosGeoId(fecha)); return a && a.monto != null ? +a.monto : null; };
   const gastosDe = m => m && m.gastos != null ? +m.gastos : null;
+  // Dean Funes y San Martín son aparte: los gastos de GEO no los cubren, en el total van con los suyos
+  const sinGeo = r => /dean\s*funes|san\s*martin/.test(norm((r.m && r.m.nombre) || r.name));
   /* Vendido del día: el efectivo entra entero; a tarjeta / QR / otros se le descuenta la comisión */
   const COMISION = 0.0322;
   const COM_TXT = `${(COMISION * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })} %`;
@@ -869,9 +871,9 @@
       return `<tr><th scope="row" class="l">${esc(r.name)}${can ? '' : ` <span class="muted" title="Tiene contraseña">${ICO.lock}</span>`}</th><td data-l="Gastos del mes" class="ga"><input class="qin" id="ga-${esc(r.m.id)}" inputmode="decimal" autocomplete="off" placeholder="${ph(v)}" aria-label="Gastos del mes de ${esc(r.name)}"${can ? '' : ' disabled'}></td></tr>`;
     }).join('');
     return `<section class="glass panel entry ga-panel rise" style="--i:2" aria-labelledby="ga-h">
-      <div class="panel-head"><div><p class="eyebrow">${esc(cap(mes))}</p><h2 id="ga-h">Gastos del mes</h2><p>El total de gastos de cada local y el de GEO en general. Se descuentan de la utilidad proyectada en la imagen: los de cada local en su tarjeta y los de GEO en el total. El número gris es lo cargado ahora; si dejás un campo vacío, queda como está.</p></div></div>
+      <div class="panel-head"><div><p class="eyebrow">${esc(cap(mes))}</p><h2 id="ga-h">Gastos del mes</h2><p>El total de gastos de cada local y el de GEO en general. Se descuentan de la utilidad proyectada en la imagen: los de cada local en su tarjeta y los de GEO en el total. Dean Funes y San Martín no entran en los de GEO: en el total se descuentan sus propios gastos. El número gris es lo cargado ahora; si dejás un campo vacío, queda como está.</p></div></div>
       <div class="tbl-wrap"><table class="ci-table edit ga-t"><thead><tr><th class="l" scope="col">Local</th><th scope="col" class="ga">Gastos del mes</th></tr></thead>
-        <tbody>${body}<tr class="ga-geo"><th scope="row" class="l">GEO (general)</th><td data-l="Gastos de GEO" class="ga"><input class="qin" id="ga-geo" inputmode="decimal" autocomplete="off" placeholder="${ph(g)}" aria-label="Gastos de GEO en general"></td></tr></tbody></table></div>
+        <tbody>${body}<tr class="ga-geo"><th scope="row" class="l">GEO (general)<small class="muted ga-nota">Sin Dean Funes ni San Martín</small></th><td data-l="Gastos de GEO" class="ga"><input class="qin" id="ga-geo" inputmode="decimal" autocomplete="off" placeholder="${ph(g)}" aria-label="Gastos de GEO en general"></td></tr></tbody></table></div>
       ${S.gastosErr ? `<p class="err" role="alert">${esc(S.gastosErr)}</p>` : ''}
       <div class="q-actions"><button type="button" class="btn" id="ga-cancel">Cancelar</button><button type="button" class="btn primary lg" id="ga-save">Guardar gastos</button></div>
     </section>`;
@@ -1278,9 +1280,17 @@
     const p75P = pc != null && T.objM ? Math.round(T.proyM * 0.75) : null;
     const totP = p75P != null && pUtOp != null ? p75P + pUtOp - sfMon(sfP) : null;
     const utLine = pc != null && (p75P != null || pUtOp != null);
-    // Gastos: los de GEO en general; si no están cargados, la suma de los locales del cierre
-    const gGeo = gastosGeo(fecha), gLoc = sel.map(r => gastosDe(r.m)).filter(v => v != null);
-    const gT = gGeo != null ? gGeo : gLoc.length ? gLoc.reduce((a, b) => a + b, 0) : null;
+    // Gastos: los de GEO cubren a todos los locales menos Dean Funes y San Martín, que suman los suyos.
+    // Si los de GEO no están cargados, se usa la suma de los locales del cierre.
+    const gGeo = gastosGeo(fecha), sum = a => a.reduce((q, v) => q + v, 0);
+    const conG = rs => rs.filter(r => gastosDe(r.m) != null);
+    const selG = sel.filter(r => !sinGeo(r)), sepG = conG(sel.filter(sinGeo)), locG = conG(selG);
+    const gParts = [];
+    if (selG.length && gGeo != null) gParts.push({ lbl: 'GEO', v: gGeo });
+    else if (locG.length) gParts.push({ lbl: sepG.length ? 'LOCALES' : 'DE LOS LOCALES', v: sum(locG.map(r => gastosDe(r.m))) });
+    if (sepG.length) gParts.push({ lbl: sepG.map(r => r.name.toUpperCase()).join(' Y '), v: sum(sepG.map(r => gastosDe(r.m))) });
+    const gT = gParts.length ? sum(gParts.map(g => g.v)) : null;
+    const gLbl = 'GASTOS ' + gParts.map(g => g.lbl).join(' + ');
     const resLine = utLine && gT != null, resT = (p75P || 0) + (pUtOp || 0) - sfMon(sfP) - (gT || 0);
     blocks.push({ h: pc == null ? 130 : 42 + proyRows.length * (proyGeo(PS).h + 12) + (utLine ? 56 : 0) + (sfP != null ? 104 : 0) + (resLine ? 106 : 0), draw: Y => {
       LBL(`PROYECCIÓN ${finLbl(T).toUpperCase()}`, Y + 26);
@@ -1299,7 +1309,8 @@
       }
       if (resLine) {
         x.fillStyle = 'rgba(255,237,213,0.16)'; x.fillRect(ix, yy + 6, iw, 1);
-        txt(gGeo != null ? 'GASTOS GEO' : 'GASTOS DE LOS LOCALES', ix, yy + 44, F(800, 21), '#fda4af');
+        x.font = F(800, 34); const gW = x.measureText('− ' + money(gT)).width + 28;
+        x.font = F(800, 21); txt(fit(gLbl, iw - gW), ix, yy + 44, F(800, 21), '#fda4af');
         txt('− ' + money(gT), ix + iw, yy + 46, F(800, 34), '#fda4af', 'right');
         txt('RESULTADO PROYECTADO', ix, yy + 94, F(800, 21), '#fdba74');
         txt((resT < 0 ? '− ' : '') + money(Math.abs(resT)), ix + iw, yy + 98, F(900, 46), resT >= 0 ? '#34d399' : '#fb7185', 'right');

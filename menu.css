@@ -292,6 +292,7 @@
 .ci-table td.ga input.qin { border-color: rgba(251, 113, 133, 0.42); background: rgba(251, 113, 133, 0.08); width: 170px; }
 .ci-table td.ga input.qin:focus { border-color: #fb7185; }
 .ci-table tr.ga-geo th, .ci-table tr.ga-geo td { border-top: 1px dashed rgba(253, 164, 175, 0.4); font-weight: 800; }
+.ci-table tr.ga-geo .ga-nota { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; }
 @media (max-width: 560px) { .ci-table td.ga input.qin { width: 100%; } }
 /* Link de prueba: aviso fijo arriba */
 body.es-prueba::before {
