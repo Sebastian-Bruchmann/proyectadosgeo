@@ -116,34 +116,41 @@ async function estado(llaves, extra) {
   const [rev, m, a, j] = await redis([['GET', K.rev], ['HGETALL', K.metas], ['HGETALL', K.avances], ['HGETALL', K.ajustes]]);
   return vista(rev, hashToObj(m), hashToObj(a), llaves, { ...(rev == null ? { nuevo: true } : {}), ...extra }, hashToObj(j));
 }
-/* Link de prueba: la primera vez copia los datos reales a la copia de prueba (y carga los gastos de noviembre para verlos). */
+/* Link de prueba: la primera vez copia los datos reales a la copia de prueba. */
 async function copiaDePrueba() {
   if (!PRUEBA) return;
   const [rev] = await redis([['GET', K.rev]]);
   if (rev != null) return;
   const [r, m, a, j] = await redis([['GET', 'proyectados:rev'], ['HGETALL', 'proyectados:metas'], ['HGETALL', 'proyectados:avances'], ['HGETALL', 'proyectados:ajustes']]);
   const flat = x => Array.isArray(x) ? x : Object.entries(x || {}).flat();
-  const metas = hashToObj(m);
-  const G = { 'plaza': 10111000, 'ruta 9': 5710000, '9 de julio 1': 4600000, 'general paz': 7500000 };
-  const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  for (const [id, mt] of Object.entries(metas)) {
-    if (!mt || mt.desde > '2026-11-30' || mt.hasta < '2026-11-01' || mt.gastos != null) continue;
-    const k = Object.keys(G).find(g => new RegExp('^' + g + '(\\b|\\s|$)').test(nrm(mt.nombre).replace(/\(.*?\)|noviembre|2026/g, '').trim()));
-    if (k) metas[id] = { ...mt, gastos: G[k] };
-  }
   const cmds = [];
-  const mf = Object.entries(metas).flatMap(([id, v]) => [id, JSON.stringify(v)]);
-  if (mf.length) cmds.push(['HSET', K.metas, ...mf]);
+  const mf = flat(m); if (mf.length) cmds.push(['HSET', K.metas, ...mf]);
   const af = flat(a); if (af.length) cmds.push(['HSET', K.avances, ...af]);
   const jf = flat(j); if (jf.length) cmds.push(['HSET', K.ajustes, ...jf]);
-  cmds.push(['HSETNX', K.ajustes, 'gastos-geo-2026-11', JSON.stringify({ monto: 56000000, actualizado: new Date().toISOString() })]);
   cmds.push(['SET', K.rev, String((+r || 0) + 1)]);
+  await redis(cmds);
+}
+/* Gastos de noviembre 2026 que pasó Sebastian: se cargan una sola vez y solo donde no hay nada cargado. */
+const GASTOS_NOV = { 'plaza': 10111000, 'ruta 9': 5710000, '9 de julio 1': 4600000, '9 de julio 5': 11000000, 'general paz': 7500000 };
+async function sembrarGastos() {
+  const [ok] = await redis([['SET', PRE + 'semilla-gastos-2026-11', '1', 'NX']]);
+  if (ok !== 'OK') return;
+  const [m] = await redis([['HGETALL', K.metas]]);
+  const metas = hashToObj(m), cmds = [];
+  const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\(.*?\)|noviembre|2026/g, '').trim();
+  for (const [id, mt] of Object.entries(metas)) {
+    if (!mt || mt.desde > '2026-11-30' || mt.hasta < '2026-11-01' || mt.gastos != null) continue;
+    const k = Object.keys(GASTOS_NOV).find(g => new RegExp('^' + g + '(\\s|$)').test(nrm(mt.nombre)));
+    if (k) cmds.push(['HSET', K.metas, id, JSON.stringify({ ...mt, gastos: GASTOS_NOV[k] })]);
+  }
+  cmds.push(['HSETNX', K.ajustes, 'gastos-geo-2026-11', JSON.stringify({ monto: 56000000, actualizado: new Date().toISOString() })]);
+  cmds.push(['INCR', K.rev]);
   await redis(cmds);
 }
 
 /* ---------- cambios ---------- */
 async function aplicar(ops, llaves) {
-  await copiaDePrueba();
+  await copiaDePrueba(); await sembrarGastos();
   const delAv = ops.filter(o => o && o.col === 'avances' && o.body == null && typeof o.id === 'string' && ID.test(o.id)).map(o => o.id);
   const pre = await redis([['HGETALL', K.metas], ['HLEN', K.avances], ...(delAv.length ? [['HMGET', K.avances, ...delAv]] : [])]);
   const metas = hashToObj(pre[0]);
@@ -260,7 +267,7 @@ export default async function handler(req, res) {
   }
   try {
     if (req.method === 'GET') {
-      await copiaDePrueba();
+      await copiaDePrueba(); await sembrarGastos();
       const llaves = leerLlaves(req.headers['x-llaves'] || url.searchParams.get('llaves'));
       const rev = url.searchParams.get('rev');
       if (rev != null && /^\d+$/.test(rev)) {
