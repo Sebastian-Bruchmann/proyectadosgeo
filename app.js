@@ -1129,15 +1129,16 @@
   let logoP = null;
   const getLogo = () => logoP || (logoP = new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = '/geo-logo.png'; }));
   const ST_COL = { ok: '#34d399', warn: '#fbbf24', bad: '#fb7185', '': '#93c5fd' };
-  async function cierreCanvas() {
+  async function cierreCanvas(hNeed) {
     const fecha = cierreFecha(), rows = cierreRows(fecha), T = cierreTotals(rows);
     if (!T) return null;
     const sel = sortCierre(rows.filter(r => r.sel && r.M));
     try { if (document.fonts) await document.fonts.ready; } catch (e) { }
     const logo = await getLogo();
-    const W = 1080, P = 60, rowH = 820, top = 250;
-    // Se dibuja sobre una capa transparente alta y después se recorta sobre el fondo
-    const c = document.createElement('canvas'); c.width = W; c.height = 2100 + sel.length * rowH;
+    const W = 1080, P = 60, rowH = 1000, top = 250;
+    // Se dibuja sobre una capa transparente alta y después se recorta sobre el fondo;
+    // si algo no entra (muchos locales o tarjetas largas) se vuelve a dibujar con la altura justa
+    const c = document.createElement('canvas'); c.width = W; c.height = hNeed || (2400 + sel.length * rowH);
     const x = c.getContext('2d');
     const F = (w, s) => `${w} ${s}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
     const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
@@ -1416,6 +1417,7 @@
     });
     // Fondo GEO y recorte
     const Hh = y + 70;
+    if (Hh > c.height && !hNeed) return cierreCanvas(Hh + 40);
     const out = document.createElement('canvas'); out.width = W; out.height = Hh;
     const o = out.getContext('2d');
     const bg = o.createLinearGradient(0, 0, 0, Hh); bg.addColorStop(0, '#0b2a5c'); bg.addColorStop(0.5, '#061a3a'); bg.addColorStop(1, '#030c1a');
