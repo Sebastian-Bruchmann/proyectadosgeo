@@ -813,6 +813,7 @@
   const finLbl = T => T.mes ? 'a fin de mes' : 'al cierre del período';
   const ICO_CIERRE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5"/><path d="M8.5 11.5h7M8.5 15.5h4.5"/></svg>';
   const ICO_SHARE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m0 0 4 4m-4-4L8 7"/><path d="M5 12v6.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V12"/></svg>';
+  const ICO_DL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 15v3.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>';
   const ICO_GASTOS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></svg>';
   const ICO_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
 
@@ -843,6 +844,7 @@
       }).join('')}</div>
       <div class="ci-actions">
         <button type="button" class="btn primary lg" id="ci-share"${T ? '' : ' disabled'}>${ICO_SHARE}Enviar imagen</button>
+        <button type="button" class="btn lg" id="ci-dl"${T ? '' : ' disabled'}>${ICO_DL}Descargar imagen</button>
         <button type="button" class="btn lg" id="ci-copy"${T ? '' : ' disabled'}>${ICO_COPY}Copiar texto</button>
         <button type="button" class="btn lg ghost-ico" id="ci-edit"${sel.length ? '' : ' disabled'} aria-pressed="${S.cierreEdit}">${ICO.edit}${S.cierreEdit ? 'Cerrar carga' : 'Cargar ventas del día'}</button>
         <button type="button" class="btn lg ghost-ico" id="ci-gastos" aria-pressed="${S.gastosEdit}">${ICO_GASTOS}${S.gastosEdit ? 'Cerrar gastos' : 'Gastos del mes'}</button>
@@ -1456,6 +1458,7 @@
       <div class="tbl-wrap"><table class="ci-table ut-table"><thead><tr><th class="l" scope="col">Local</th>${UTIL.map(o => `<th scope="col">${o.lbl}</th>`).join('')}<th scope="col">Utilidad ${dTxt}</th><th scope="col">En el mes</th></tr></thead><tbody>${body}</tbody>${foot}</table></div>
       <div class="ci-actions">
         <button type="button" class="btn primary lg" id="ut-share">${ICO_SHARE}Enviar imagen de utilidad</button>
+        <button type="button" class="btn lg" id="ut-dl">${ICO_DL}Descargar imagen</button>
         <button type="button" class="btn lg" id="ut-copy">${ICO_COPY}Copiar texto</button>
       </div>
       <div class="ci-img"><img id="ut-img" alt="Vista previa de la utilidad"><p class="muted" id="ut-img-wait">Armando la imagen…</p></div>
@@ -1565,6 +1568,16 @@
     document.body.appendChild(a); a.click(); a.remove();
     toast('Imagen descargada');
   }
+  // Descarga directa de la imagen (en la compu es lo más cómodo para mandarla después)
+  function bajarImg(st) {
+    const a = document.createElement('a'); a.href = st.url; a.download = st.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Imagen descargada: ' + st.name);
+  }
+  function downloadUtil() {
+    if (!UT.blob || UT.sig !== utilSig()) { toast('Un segundo, estoy armando la imagen…'); scheduleUtilImage(); return; }
+    bajarImg(UT);
+  }
   async function copyUtil() {
     const text = utilText(), fb = $('#copy-fallback');
     try { await navigator.clipboard.writeText(text); toast('Texto de utilidad copiado'); }
@@ -1607,6 +1620,10 @@
     a.href = CI.url; a.download = CI.name;
     document.body.appendChild(a); a.click(); a.remove();
     toast('Imagen descargada');
+  }
+  function downloadCierre() {
+    if (!CI.blob || CI.sig !== cierreSig()) { toast('Un segundo, estoy armando la imagen…'); scheduleCierreImage(); return; }
+    bajarImg(CI);
   }
   async function copyCierre() {
     const text = cierreText(), fb = $('#copy-fallback');
@@ -1865,6 +1882,8 @@
     if (t.dataset.csel) { const all = t.dataset.csel === 'all'; cierreRows(cierreFecha()).forEach(r => { if (!r.locked) CP.sel[r.key] = all; }); saveCierre(); render(); return; }
     if (t.id === 'ci-share') { shareCierre(); return; }
     if (t.id === 'ci-copy') { copyCierre(); return; }
+    if (t.id === 'ci-dl') { downloadCierre(); return; }
+    if (t.id === 'ut-dl') { downloadUtil(); return; }
     if (t.id === 'ut-share') { shareUtil(); return; }
     if (t.id === 'ut-copy') { copyUtil(); return; }
     if (t.id === 'ci-gastos') { S.gastosEdit = !S.gastosEdit; S.gastosErr = ''; render(); if (S.gastosEdit) { const f = main.querySelector('.ga-t input:not([disabled])'); if (f) f.focus(); } return; }
