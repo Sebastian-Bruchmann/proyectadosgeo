@@ -686,7 +686,7 @@
     return sortedMetas().filter(m => m.desde <= fecha && fecha <= m.hasta).map(m => {
       const name = localName(m), key = nrm(name), locked = hidden(m);
       const M = locked ? null : buildModel(m, fecha, true);
-      return { m, name, key, locked, M, hoy: M ? hoyOf(M, fecha) : null, sf: M ? sfOf(M, fecha) : null, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
+      return { m, name, key, locked, M, hoy: M ? hoyOf(M, fecha) : null, sf: M && !sepNom(m.nombre) ? sfOf(M, fecha) : null, sel: !locked && isSel(key), stale: M ? (!M.last || M.last.fecha < fecha) : false };
     }).sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   }
   /* % proyectado al cierre del período */
@@ -697,8 +697,11 @@
   const gastosGeoId = fecha => 'gastos-geo-' + fecha.slice(0, 7);
   const gastosGeo = fecha => { const a = S.ajustes.get(gastosGeoId(fecha)); return a && a.monto != null ? +a.monto : null; };
   const gastosDe = m => m && m.gastos != null ? +m.gastos : null;
-  // Dean Funes y San Martín son aparte: los gastos de GEO no los cubren, en el total van con los suyos
-  const sinGeo = r => /dean\s*funes|san\s*martin/.test(norm((r.m && r.m.nombre) || r.name));
+  // Dean Funes y San Martín son aparte: los gastos de GEO no los cubren (en el total van con los suyos)
+  // y no usan servicios financieros (no se muestran ni se restan en esos dos)
+  const sepNom = s => /dean\s*funes|san\s*martin/.test(norm(s || ''));
+  const sinGeo = r => sepNom((r.m && r.m.nombre) || r.name);
+  const usaSF = r => !sinGeo(r);
   /* Vendido del día: el efectivo entra entero; a tarjeta / QR / otros se le descuenta la comisión */
   const COMISION = 0.0322;
   const COM_TXT = `${(COMISION * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })} %`;
@@ -1022,6 +1025,7 @@
     </section>`;
   }
   function sfEditHTML(fecha, list, diaDe) {
+    const sinSF = list.some(sinGeo); list = list.filter(usaSF); if (!list.length) return '';
     const rows = list.map(r => {
       const there = S.avances.get(r.m.id + '__' + fecha), id = esc(r.m.id), dis = canEdit(r.m) ? '' : ' disabled';
       const b = sfHas(there) ? sfCant(there) : null;
@@ -1031,7 +1035,7 @@
     }).join('');
     return `<div class="ut-edit sf-edit">
       <h3>Servicios financieros ${diaDe} <span class="muted">· sale en el cierre</span></h3>
-      <p class="muted">Cuántos accesorios se vendieron ${diaDe}. Cada uno suma ${moneyC(SF[0].val)}.</p>
+      <p class="muted">Cuántos accesorios se vendieron ${diaDe}. Cada uno suma ${moneyC(SF[0].val)}.${sinSF ? ' Dean Funes y San Martín no usan servicios financieros.' : ''}</p>
       <div class="tbl-wrap"><table class="ci-table edit sf-t"><thead><tr><th class="l" scope="col">Local</th>${SF.map(o => `<th scope="col" class="sf">${o.lbl}<small>${moneyC(o.val)} c/u</small></th>`).join('')}<th scope="col" class="sf">Total ${diaDe}</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   }
@@ -1275,7 +1279,7 @@
     // Servicios financieros proyectados: promedio de accesorios por día cargado × días hábiles del mes; en plata, × $ 1.967
     const sfProy = M => { const ds = M.av.filter(sfHas); return ds.length ? ds.reduce((q, a) => q + sfCant(a), 0) / ds.length * M.H : null; };
     const sfMon = v => v == null ? 0 : Math.round(v) * SF[0].val;
-    const sfPs = sel.map(r => sfProy(r.M)).filter(v => v != null);
+    const sfPs = sel.filter(usaSF).map(r => sfProy(r.M)).filter(v => v != null);
     const sfP = sfPs.length ? sfPs.reduce((a, b) => a + b, 0) : null;
     const accTxt = v => `${nf0.format(v)} ${Math.round(v) === 1 ? 'accesorio' : 'accesorios'}`;
     // Utilidad proyectada (dorado) = 75 % del Acc proyectado + utilidad de Op − servicios financieros
@@ -1396,7 +1400,7 @@
       const p75PL = M.objM && M.started ? Math.round((M.proyM != null ? M.proyM : M.vendM) * 0.75) : null;
       const uOpL = M.started ? pUtOpOf(M) : null;
       // Utilidad proyectada del local (dorado) ya con los servicios financieros descontados
-      const sfPL = sfProy(M), sfML = sfMon(sfPL);
+      const sfPL = usaSF(r) ? sfProy(M) : null, sfML = sfMon(sfPL);
       if (p75PL != null || uOpL != null) { triLine(cx, cw, cy + 30, p75PL != null ? money(p75PL) : null, p75PL != null && uOpL != null ? money(p75PL + uOpL - sfML) : null, uOpL != null ? money(uOpL) : null, 28); cy += 50; }
       if (sfPL != null) {
         txt('SERVICIOS FINANCIEROS', cx, cy + 22, F(800, 17), '#6ee7b7'); txt(accTxt(sfPL), cx + cw, cy + 26, F(900, 28), '#ffffff', 'right');
